@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuroforge"
+version = "0.1.0"
+description = "Reproducible safety-repair routing study infrastructure"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2",
+  "typer>=0.12",
+  "PyYAML>=6",
+  "numpy>=2",
+  "scipy>=1.14",
+  "scikit-learn>=1.5",
+  "matplotlib>=3.9",
+  "huggingface_hub>=0.27",
+  "safetensors>=0.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.8",
+]
+ml = [
+  "torch==2.13.0",
+  "torchvision==0.28.0",
+  "transformers==5.21.1",
+  "trl==1.7.1",
+  "peft==0.18.0",
+  "bitsandbytes==0.49.2",
+  "accelerate>=1",
+]
+safetune = [
+  "safetune @ git+https://github.com/Lexsi-Labs/SafeTune.git@f86cf77e0de50756f3885673b2e472705177722e",
+]
+circuitkit = [
+  "circuitkit @ git+https://github.com/Lexsi-Labs/CircuitKIT.git@601a5d392bab32aa600de5db12abea1cd6b2b6ec",
+]
+curatorkit = [
+  "curatorkit @ git+https://github.com/Lexsi-Labs/CuratorKIT.git@86bbacc89b0516cfb30c78e2d8073ebdf0dad0bb",
+]
+auditkit = [
+  "auditkit @ git+https://github.com/Lexsi-Labs/AuditKIT.git@9d4e21bac240e8108a22c2c137d179d6070868d5",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
