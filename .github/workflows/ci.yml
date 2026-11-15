@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      NEUROFORGE_RUN_PODMAN_TESTS: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install project and data-toolkit test dependencies
+        run: uv sync --extra dev --extra curatorkit --extra auditkit
+      - name: Install CPU-only PyTorch for tensor unit tests
+        run: >-
+          uv pip install --python .venv/bin/python
+          --index-url https://download.pytorch.org/whl/cpu
+          "torch==2.13.0"
+      - name: Run CPU unit tests
+        run: uv run --no-sync pytest -q
+
+# This workflow intentionally does not download models, use a GPU, call cloud APIs,
+# publish artifacts, or enable the opt-in Podman boundary probe. GPU validation must
+# use a configured self-hosted runner outside this workflow; no empty GPU job is declared.

@@ -19,6 +19,9 @@ dependencies = [
   "safetensors>=0.5",
 ]
 
+[project.scripts]
+neuroforge = "neuroforge.cli:app"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8",

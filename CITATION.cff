@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use NeuroForge, please cite this repository."
+title: "NeuroForge"
+type: software
+authors:
+  - name: "Skrisps26"
+repository-code: "https://github.com/Skrisps26/neuroforge"
+license: Apache-2.0
+version: 0.1.0
+abstract: "Preregistered infrastructure for an evidence-bound safety-repair routing study."
