@@ -8,18 +8,19 @@ import gc
 import json
 import sys
 import time
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from neuroforge.artifacts import read_json_artifact, read_manifest, sha256_file
 from neuroforge.cli import (
     _artifact_id,
     _configured_fault,
     _file_id,
-    _load_curated_split,
     _load_config,
+    _load_curated_split,
     _run_snapshot,
     _stage_snapshot,
     _write_json,
@@ -67,7 +68,9 @@ def _guardian_path() -> Path:
     return Path(__file__).resolve().parents[1] / "models" / "granite-guardian"
 
 
-def _evaluate_and_capture(config: Any, items: list[Any], responses: list[dict[str, Any]]) -> tuple[Metrics, list[dict[str, Any]]]:
+def _evaluate_and_capture(
+    config: Any, items: list[Any], responses: list[dict[str, Any]]
+) -> tuple[Metrics, list[dict[str, Any]]]:
     """Score with AuditKIT and retain only scorer-emitted per-record values."""
     from neuroforge.evaluation import evaluate_responses
 
@@ -82,6 +85,7 @@ def _evaluate_and_capture(config: Any, items: list[Any], responses: list[dict[st
     )
     return metrics, score_records
 
+
 def _stage_path(run_dir: Path, phase: str, fault_id: str | None = None) -> Path:
     suffix = f"-{fault_id}" if fault_id is not None else ""
     return run_dir / "study-execution" / f"{phase}{suffix}.json"
@@ -95,12 +99,19 @@ def _record_stage(
     fault_id: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> StageResult:
-    payload = {"phase": phase, "fault_id": fault_id, "result": result.model_dump(mode="json"), "details": details or {}}
+    payload = {
+        "phase": phase,
+        "fault_id": fault_id,
+        "result": result.model_dump(mode="json"),
+        "details": details or {},
+    }
     _write_json(_stage_path(run_dir, phase, fault_id), payload, run_dir)
     return result
 
 
-def _existing_stage(run_dir: Path, phase: str, config_hash: str, fault_id: str | None = None) -> StageResult | None:
+def _existing_stage(
+    run_dir: Path, phase: str, config_hash: str, fault_id: str | None = None
+) -> StageResult | None:
     path = _stage_path(run_dir, phase, fault_id)
     if not path.exists():
         return None
@@ -152,7 +163,9 @@ def _recorded_candidate_cost(run_dir: Path) -> Decimal:
     return total
 
 
-def _deadline_result(config_hash: str, libraries: dict[str, str], started: float, reason: str) -> StageResult:
+def _deadline_result(
+    config_hash: str, libraries: dict[str, str], started: float, reason: str
+) -> StageResult:
     return _result(
         status="inconclusive",
         config_hash=config_hash,
@@ -166,7 +179,14 @@ def _baseline_manifest_path(run_dir: Path) -> Path:
     return run_dir / "baseline" / "manifest.json"
 
 
-def _baseline(run_dir: Path, config: Any, data_manifest: Path, digest: str, libraries: dict[str, str], deadline: datetime | None) -> tuple[StageResult, dict[str, Metrics]]:
+def _baseline(
+    run_dir: Path,
+    config: Any,
+    data_manifest: Path,
+    digest: str,
+    libraries: dict[str, str],
+    deadline: datetime | None,
+) -> tuple[StageResult, dict[str, Metrics]]:
     existing = _existing_stage(run_dir, "baseline", digest)
     manifest_path = _baseline_manifest_path(run_dir)
     if existing is not None:
@@ -178,7 +198,9 @@ def _baseline(run_dir: Path, config: Any, data_manifest: Path, digest: str, libr
         metrics = _read_baseline(manifest_path, digest)
         started = time.monotonic()
         result = _result(
-            status="success" if all(value.complete for value in metrics.values()) else "inconclusive",
+            status="success"
+            if all(value.complete for value in metrics.values())
+            else "inconclusive",
             config_hash=digest,
             libraries=libraries,
             started=started,
@@ -189,7 +211,9 @@ def _baseline(run_dir: Path, config: Any, data_manifest: Path, digest: str, libr
     reason = _can_start(deadline)
     started = time.monotonic()
     if reason is not None:
-        return _record_stage(run_dir, "baseline", _deadline_result(digest, libraries, started, reason)), {}
+        return _record_stage(
+            run_dir, "baseline", _deadline_result(digest, libraries, started, reason)
+        ), {}
 
     from neuroforge.modeling import generate_responses, load_model
 
@@ -221,7 +245,9 @@ def _baseline(run_dir: Path, config: Any, data_manifest: Path, digest: str, libr
         _write_json(metadata_path, {"split": split, "metadata": metadata}, run_dir)
         measured, score_records = _evaluate_and_capture(config, items, responses)
         _write_json(score_path, {"split": split, "score_records": score_records}, run_dir)
-        _write_json(metric_path, {"split": split, "metrics": measured.model_dump(mode="json")}, run_dir)
+        _write_json(
+            metric_path, {"split": split, "metrics": measured.model_dump(mode="json")}, run_dir
+        )
         metrics[split] = measured
         for path in (response_path, metadata_path, score_path, metric_path):
             hashes[str(path.relative_to(run_dir))] = sha256_file(path)
@@ -230,7 +256,10 @@ def _baseline(run_dir: Path, config: Any, data_manifest: Path, digest: str, libr
         "schema_version": 1,
         "config_hash": digest,
         "data_manifest": _file_id(data_manifest),
-        "split_artifacts": {"development": _file_id(development_path), "validation": _file_id(validation_path)},
+        "split_artifacts": {
+            "development": _file_id(development_path),
+            "validation": _file_id(validation_path),
+        },
         "metrics": {name: value.model_dump(mode="json") for name, value in metrics.items()},
         "artifact_sha256": hashes,
     }
@@ -261,11 +290,17 @@ def _read_baseline(path: Path, digest: str) -> dict[str, Metrics]:
     root = path.parents[1]
     for relative, expected in hashes.items():
         artifact = root / relative
-        if not isinstance(relative, str) or not isinstance(expected, str) or sha256_file(artifact) != expected:
+        if (
+            not isinstance(relative, str)
+            or not isinstance(expected, str)
+            or sha256_file(artifact) != expected
+        ):
             raise ValueError(f"baseline artifact hash mismatch: {relative}")
     required = {"development", "validation"}
     if set(metrics) != required:
-        raise ValueError("baseline manifest does not contain both development and validation metrics")
+        raise ValueError(
+            "baseline manifest does not contain both development and validation metrics"
+        )
     return {name: Metrics.model_validate(metrics[name]) for name in sorted(required)}
 
 
@@ -287,11 +322,19 @@ def _observed_eligibility(fault: Any, base: Metrics, drift: Metrics) -> tuple[bo
     if not base.complete or not drift.complete:
         return False, "incomplete base or drift validation metrics"
     if fault.fault_type == "F1":
-        if drift.safety_failure_rate is not None and base.safety_failure_rate is not None and drift.safety_failure_rate > base.safety_failure_rate:
+        if (
+            drift.safety_failure_rate is not None
+            and base.safety_failure_rate is not None
+            and drift.safety_failure_rate > base.safety_failure_rate
+        ):
             return True, "observed strict safety failure increase"
         return False, "null fault: no observed strict safety failure increase"
     if fault.fault_type == "F2":
-        if drift.overrefusal_rate is not None and base.overrefusal_rate is not None and drift.overrefusal_rate > base.overrefusal_rate:
+        if (
+            drift.overrefusal_rate is not None
+            and base.overrefusal_rate is not None
+            and drift.overrefusal_rate > base.overrefusal_rate
+        ):
             return True, "observed strict overrefusal increase"
         return False, "null fault: no observed strict overrefusal increase"
     return False, f"unsupported fault type: {fault.fault_type}"
@@ -362,7 +405,14 @@ def _diagnostic_path(run_dir: Path, fault_id: str) -> Path:
     return run_dir / "fault-work" / fault_id / "diagnostics" / "report.json"
 
 
-def _diagnose_fault(run_dir: Path, config: Any, fault: Any, data_manifest: Path, digest: str, deadline: datetime | None) -> StageResult:
+def _diagnose_fault(
+    run_dir: Path,
+    config: Any,
+    fault: Any,
+    data_manifest: Path,
+    digest: str,
+    deadline: datetime | None,
+) -> StageResult:
     existing = _diagnostic_path(run_dir, fault.fault_id)
     if existing.exists():
         report = read_json_artifact(existing, root=run_dir)
@@ -370,12 +420,23 @@ def _diagnose_fault(run_dir: Path, config: Any, fault: Any, data_manifest: Path,
             raise ValueError(f"diagnostic report has a different configuration hash: {existing}")
         return StageResult(
             status="success" if "D2" in report and "D3" in report else "inconclusive",
-            input_artifact_ids=[], output_artifact_ids=[str(existing)], config_hash=digest,
-            library_versions=report.get("library_versions", {}), timing={"wall_seconds": sys.float_info.epsilon},
+            input_artifact_ids=[],
+            output_artifact_ids=[str(existing)],
+            config_hash=digest,
+            library_versions=report.get("library_versions", {}),
+            timing={"wall_seconds": sys.float_info.epsilon},
         )
     reason = _can_start(deadline)
     if reason is not None:
-        return StageResult(status="inconclusive", input_artifact_ids=[], output_artifact_ids=[], config_hash=digest, library_versions={}, timing={"wall_seconds": sys.float_info.epsilon}, warnings=[reason])
+        return StageResult(
+            status="inconclusive",
+            input_artifact_ids=[],
+            output_artifact_ids=[],
+            config_hash=digest,
+            library_versions={},
+            timing={"wall_seconds": sys.float_info.epsilon},
+            warnings=[reason],
+        )
     from neuroforge.diagnostics import run_diagnostics
     from neuroforge.modeling import load_model
     from neuroforge.repairs import _merged_drift
@@ -386,7 +447,9 @@ def _diagnose_fault(run_dir: Path, config: Any, fault: Any, data_manifest: Path,
     drifted = _merged_drift(config, adapter)
     setattr(drifted, "neuroforge_fault_id", fault.fault_id)
     try:
-        return run_diagnostics(config, base, drifted, development, run_dir / "fault-work" / fault.fault_id)
+        return run_diagnostics(
+            config, base, drifted, development, run_dir / "fault-work" / fault.fault_id
+        )
     finally:
         del base, drifted, tokenizer
         _release()
@@ -397,13 +460,27 @@ def _candidate_path(run_dir: Path, fault_id: str, method: str) -> Path:
 
 
 def _candidate_error(
-    fault: Any, method: str, error: str, *, wall_seconds: float = 0.0, status: GateOutcome = GateOutcome.ERROR
+    fault: Any,
+    method: str,
+    error: str,
+    *,
+    wall_seconds: float = 0.0,
+    status: GateOutcome = GateOutcome.ERROR,
 ) -> CandidateRecord:
     return CandidateRecord(
-        candidate_id=f"{fault.fault_id}:{method}", fault_id=fault.fault_id, method=method,
-        metrics=Metrics(), decision=GateDecision(decision=status, reasons=[error]), cost_usd=Decimal("0"),
-        wall_seconds=wall_seconds, split="validation", seed=fault.seed,
-        parameters={"execution_status": "blocked" if status == GateOutcome.INCONCLUSIVE else "error", "cost_status": "not measured"},
+        candidate_id=f"{fault.fault_id}:{method}",
+        fault_id=fault.fault_id,
+        method=method,
+        metrics=Metrics(),
+        decision=GateDecision(decision=status, reasons=[error]),
+        cost_usd=Decimal("0"),
+        wall_seconds=wall_seconds,
+        split="validation",
+        seed=fault.seed,
+        parameters={
+            "execution_status": "blocked" if status == GateOutcome.INCONCLUSIVE else "error",
+            "cost_status": "not measured",
+        },
     )
 
 
@@ -435,9 +512,22 @@ def _candidate(
 
         development, _ = _load_curated_split(data_manifest, "development", digest)
         adapter = run_dir / "faults" / fault.fault_id / "adapter"
-        built = repair_candidate(config, fault, method, adapter, run_dir, diagnostics=diagnostics, development_items=development)
+        built = repair_candidate(
+            config,
+            fault,
+            method,
+            adapter,
+            run_dir,
+            diagnostics=diagnostics,
+            development_items=development,
+        )
         if built.status != "success":
-            record = _candidate_error(fault, method, "; ".join(built.errors) or f"repair status {built.status}", wall_seconds=time.monotonic() - started)
+            record = _candidate_error(
+                fault,
+                method,
+                "; ".join(built.errors) or f"repair status {built.status}",
+                wall_seconds=time.monotonic() - started,
+            )
         else:
             manifest_path = run_dir / "repairs" / fault.fault_id / method / "manifest.json"
             manifest = read_manifest(manifest_path, root=run_dir)
@@ -452,7 +542,9 @@ def _candidate(
                 model = reload_candidate(model, tokenizer, manifest_path.parent, manifest)
             try:
                 metadata: dict[str, Any] = {}
-                responses = generate_responses(model, tokenizer, validation, config, metadata_out=metadata)
+                responses = generate_responses(
+                    model, tokenizer, validation, config, metadata_out=metadata
+                )
             finally:
                 del model, tokenizer
                 _release()
@@ -462,12 +554,27 @@ def _candidate(
             _write_json(response_path, {"split": "validation", "responses": responses}, run_dir)
             _write_json(metadata_path, {"split": "validation", "metadata": metadata}, run_dir)
             score_path = manifest_path.parent / "validation-score-records.json"
-            _write_json(score_path, {"split": "validation", "score_records": score_records}, run_dir)
+            _write_json(
+                score_path, {"split": "validation", "score_records": score_records}, run_dir
+            )
             from neuroforge.gate import decide
-            decision = decide(base, drift, metrics, config.acceptance, fault_type=fault.fault_type, reloadable=True, integrity_ok=True, truncated_to_empty=any(bool(row.get("truncated_to_empty")) for row in responses))
+
+            decision = decide(
+                base,
+                drift,
+                metrics,
+                config.acceptance,
+                fault_type=fault.fault_type,
+                reloadable=True,
+                integrity_ok=True,
+                truncated_to_empty=any(bool(row.get("truncated_to_empty")) for row in responses),
+            )
             record = CandidateRecord(
-                candidate_id=f"{fault.fault_id}:{method}", fault_id=fault.fault_id, method=method,
-                artifact_path=str(manifest_path), artifact_sha256=manifest.artifact_sha256,
+                candidate_id=f"{fault.fault_id}:{method}",
+                fault_id=fault.fault_id,
+                method=method,
+                artifact_path=str(manifest_path),
+                artifact_sha256=manifest.artifact_sha256,
                 parameters={
                     **manifest.parameters,
                     "source_manifest_sha256": sha256_file(manifest_path),
@@ -475,26 +582,44 @@ def _candidate(
                     "validation_score_records": _file_id(score_path),
                     "cost_status": "not measured",
                 },
-                metrics=metrics, decision=decision, cost_usd=Decimal("0"), wall_seconds=time.monotonic() - started,
-                split="validation", seed=fault.seed, changed_parameter_count=manifest.changed_parameter_count,
+                metrics=metrics,
+                decision=decision,
+                cost_usd=Decimal("0"),
+                wall_seconds=time.monotonic() - started,
+                split="validation",
+                seed=fault.seed,
+                changed_parameter_count=manifest.changed_parameter_count,
             )
     except Exception as error:
-        record = _candidate_error(fault, method, f"{type(error).__name__}: {error}", wall_seconds=time.monotonic() - started)
+        record = _candidate_error(
+            fault,
+            method,
+            f"{type(error).__name__}: {error}",
+            wall_seconds=time.monotonic() - started,
+        )
     _write_json(path, {"config_hash": digest, "candidate": record.model_dump(mode="json")}, run_dir)
     return record
 
 
-def _phase_baseline(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
-    result, _ = _baseline(args.run_dir, config, args.data_manifest, digest, libraries, args.deadline)
+def _phase_baseline(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
+    result, _ = _baseline(
+        args.run_dir, config, args.data_manifest, digest, libraries, args.deadline
+    )
     return result
 
 
-def _phase_first_proof(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
+def _phase_first_proof(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
     existing = _existing_stage(args.run_dir, "first-proof", digest)
     if existing is not None:
         return existing
     started = time.monotonic()
-    baseline_result, baseline = _baseline(args.run_dir, config, args.data_manifest, digest, libraries, args.deadline)
+    baseline_result, baseline = _baseline(
+        args.run_dir, config, args.data_manifest, digest, libraries, args.deadline
+    )
     if baseline_result.status != "success":
         return _record_stage(
             args.run_dir,
@@ -510,12 +635,50 @@ def _phase_first_proof(args: argparse.Namespace, config: Any, digest: str, libra
     if args.fault_id not in {None, "f1-01"}:
         raise ValueError("first-proof is fixed to fault_id f1-01")
     fault = _configured_fault(config, "f1-01")
-    measured, failure = _train_and_measure_fault(args.run_dir, config, fault, args.data_manifest, digest, libraries, baseline["validation"], args.deadline)
+    measured, failure = _train_and_measure_fault(
+        args.run_dir,
+        config,
+        fault,
+        args.data_manifest,
+        digest,
+        libraries,
+        baseline["validation"],
+        args.deadline,
+    )
     if failure is not None or measured is None:
-        return _record_stage(args.run_dir, "first-proof", failure or _result(status="error", config_hash=digest, libraries=libraries, started=started, errors=["fault measurement missing"]))
+        return _record_stage(
+            args.run_dir,
+            "first-proof",
+            failure
+            or _result(
+                status="error",
+                config_hash=digest,
+                libraries=libraries,
+                started=started,
+                errors=["fault measurement missing"],
+            ),
+        )
     drift = Metrics.model_validate(measured["drift_metrics"])
-    records = [_candidate(args.run_dir, config, fault, method, baseline["validation"], drift, {}, args.data_manifest, digest, args.deadline) for method in ("B0", "M1")]
-    status = "success" if all(record.metrics.complete and record.decision is not None for record in records) else "inconclusive"
+    records = [
+        _candidate(
+            args.run_dir,
+            config,
+            fault,
+            method,
+            baseline["validation"],
+            drift,
+            {},
+            args.data_manifest,
+            digest,
+            args.deadline,
+        )
+        for method in ("B0", "M1")
+    ]
+    status = (
+        "success"
+        if all(record.metrics.complete and record.decision is not None for record in records)
+        else "inconclusive"
+    )
     output_ids = [_file_id(_fault_validation_path(args.run_dir, fault.fault_id))]
     output_ids.extend(
         _file_id(_candidate_path(args.run_dir, fault.fault_id, method))
@@ -535,19 +698,44 @@ def _phase_first_proof(args: argparse.Namespace, config: Any, digest: str, libra
     )
 
 
-def _phase_population(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
+def _phase_population(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
     existing = _existing_stage(args.run_dir, "population", digest)
     if existing is not None:
         return existing
     started = time.monotonic()
-    baseline_result, baseline = _baseline(args.run_dir, config, args.data_manifest, digest, libraries, args.deadline)
+    baseline_result, baseline = _baseline(
+        args.run_dir, config, args.data_manifest, digest, libraries, args.deadline
+    )
     if baseline_result.status != "success":
-        return _record_stage(args.run_dir, "population", _result(status="inconclusive", config_hash=digest, libraries=libraries, started=started, errors=["baseline did not complete"]))
+        return _record_stage(
+            args.run_dir,
+            "population",
+            _result(
+                status="inconclusive",
+                config_hash=digest,
+                libraries=libraries,
+                started=started,
+                errors=["baseline did not complete"],
+            ),
+        )
     failures: list[str] = []
     outputs: list[str] = []
-    faults = [fault for fault in config.faults if args.fault_id is None or fault.fault_id == args.fault_id]
+    faults = [
+        fault for fault in config.faults if args.fault_id is None or fault.fault_id == args.fault_id
+    ]
     for fault in faults:
-        measured, failure = _train_and_measure_fault(args.run_dir, config, fault, args.data_manifest, digest, libraries, baseline["validation"], args.deadline)
+        measured, failure = _train_and_measure_fault(
+            args.run_dir,
+            config,
+            fault,
+            args.data_manifest,
+            digest,
+            libraries,
+            baseline["validation"],
+            args.deadline,
+        )
         if failure is not None:
             failures.extend(failure.errors or [f"{fault.fault_id}: {failure.status}"])
             if failure.status == "inconclusive":
@@ -555,10 +743,23 @@ def _phase_population(args: argparse.Namespace, config: Any, digest: str, librar
         elif measured is not None:
             outputs.append(_file_id(_fault_validation_path(args.run_dir, fault.fault_id)))
     status = "success" if len(outputs) == len(faults) and not failures else "inconclusive"
-    return _record_stage(args.run_dir, "population", _result(status=status, config_hash=digest, libraries=libraries, started=started, outputs=outputs, errors=failures))
+    return _record_stage(
+        args.run_dir,
+        "population",
+        _result(
+            status=status,
+            config_hash=digest,
+            libraries=libraries,
+            started=started,
+            outputs=outputs,
+            errors=failures,
+        ),
+    )
 
 
-def _phase_diagnostics(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
+def _phase_diagnostics(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
     existing = _existing_stage(args.run_dir, "diagnostics", digest)
     if existing is not None:
         return existing
@@ -571,22 +772,49 @@ def _phase_diagnostics(args: argparse.Namespace, config: Any, digest: str, libra
         if _load_fault_validation(args.run_dir, fault.fault_id, digest) is None:
             errors.append(f"{fault.fault_id}: no measured fault validation")
             continue
-        result = _diagnose_fault(args.run_dir, config, fault, args.data_manifest, digest, args.deadline)
+        result = _diagnose_fault(
+            args.run_dir, config, fault, args.data_manifest, digest, args.deadline
+        )
         outputs.extend(result.output_artifact_ids)
         errors.extend(result.errors)
         if result.status != "success":
             errors.append(f"{fault.fault_id}: diagnostics {result.status}")
-    return _record_stage(args.run_dir, "diagnostics", _result(status="success" if outputs and not errors else "inconclusive", config_hash=digest, libraries=libraries, started=started, outputs=outputs, errors=errors))
+    return _record_stage(
+        args.run_dir,
+        "diagnostics",
+        _result(
+            status="success" if outputs and not errors else "inconclusive",
+            config_hash=digest,
+            libraries=libraries,
+            started=started,
+            outputs=outputs,
+            errors=errors,
+        ),
+    )
 
 
-def _phase_candidates(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
+def _phase_candidates(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
     existing = _existing_stage(args.run_dir, "candidates", digest)
     if existing is not None:
         return existing
     started = time.monotonic()
-    baseline_result, baseline = _baseline(args.run_dir, config, args.data_manifest, digest, libraries, args.deadline)
+    baseline_result, baseline = _baseline(
+        args.run_dir, config, args.data_manifest, digest, libraries, args.deadline
+    )
     if baseline_result.status != "success":
-        return _record_stage(args.run_dir, "candidates", _result(status="inconclusive", config_hash=digest, libraries=libraries, started=started, errors=["baseline did not complete"]))
+        return _record_stage(
+            args.run_dir,
+            "candidates",
+            _result(
+                status="inconclusive",
+                config_hash=digest,
+                libraries=libraries,
+                started=started,
+                errors=["baseline did not complete"],
+            ),
+        )
     outputs: list[str] = []
     errors: list[str] = []
     for fault in config.faults:
@@ -604,30 +832,72 @@ def _phase_candidates(args: argparse.Namespace, config: Any, digest: str, librar
         eligible = bool(measured["observed_eligible"])
         for method in _METHODS:
             if not eligible:
-                record = _candidate_error(fault, method, str(measured["eligibility_reason"]), status=GateOutcome.INCONCLUSIVE)
+                record = _candidate_error(
+                    fault,
+                    method,
+                    str(measured["eligibility_reason"]),
+                    status=GateOutcome.INCONCLUSIVE,
+                )
                 candidate_path = _candidate_path(args.run_dir, fault.fault_id, method)
                 if candidate_path.exists():
-                    record = CandidateRecord.model_validate(read_json_artifact(candidate_path, root=args.run_dir)["candidate"])
+                    record = CandidateRecord.model_validate(
+                        read_json_artifact(candidate_path, root=args.run_dir)["candidate"]
+                    )
                 else:
-                    _write_json(candidate_path, {"config_hash": digest, "candidate": record.model_dump(mode="json")}, args.run_dir)
+                    _write_json(
+                        candidate_path,
+                        {"config_hash": digest, "candidate": record.model_dump(mode="json")},
+                        args.run_dir,
+                    )
             else:
-                record = _candidate(args.run_dir, config, fault, method, baseline["validation"], drift, diagnostics, args.data_manifest, digest, args.deadline)
+                record = _candidate(
+                    args.run_dir,
+                    config,
+                    fault,
+                    method,
+                    baseline["validation"],
+                    drift,
+                    diagnostics,
+                    args.data_manifest,
+                    digest,
+                    args.deadline,
+                )
             candidate_path = _candidate_path(args.run_dir, fault.fault_id, method)
             if candidate_path.exists():
                 outputs.append(_file_id(candidate_path))
-            if record.decision is None or record.decision.decision in {GateOutcome.ERROR, GateOutcome.INCONCLUSIVE}:
-                errors.append(f"{fault.fault_id}:{method}:{record.decision.decision if record.decision else 'missing decision'}")
-    return _record_stage(args.run_dir, "candidates", _result(status="success" if outputs and not errors else "inconclusive", config_hash=digest, libraries=libraries, started=started, outputs=outputs, errors=errors))
+            if record.decision is None or record.decision.decision in {
+                GateOutcome.ERROR,
+                GateOutcome.INCONCLUSIVE,
+            }:
+                errors.append(
+                    f"{fault.fault_id}:{method}:{record.decision.decision if record.decision else 'missing decision'}"
+                )
+    return _record_stage(
+        args.run_dir,
+        "candidates",
+        _result(
+            status="success" if outputs and not errors else "inconclusive",
+            config_hash=digest,
+            libraries=libraries,
+            started=started,
+            outputs=outputs,
+            errors=errors,
+        ),
+    )
 
 
-def _phase_route(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
+def _phase_route(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
     existing = _existing_stage(args.run_dir, "route", digest)
     if existing is not None:
         return existing
     started = time.monotonic()
     reason = _can_start(args.deadline)
     if reason is not None:
-        return _record_stage(args.run_dir, "route", _deadline_result(digest, libraries, started, reason))
+        return _record_stage(
+            args.run_dir, "route", _deadline_result(digest, libraries, started, reason)
+        )
     from neuroforge.router import analyze_router
 
     features = []
@@ -644,6 +914,7 @@ def _phase_route(args: argparse.Namespace, config: Any, digest: str, libraries: 
         if report.get("config_hash") != digest or "features" not in report:
             continue
         from neuroforge.contracts import DiagnosticFeatures
+
         features.append(DiagnosticFeatures.model_validate(report["features"]))
         drift_metrics[fault.fault_id] = Metrics.model_validate(measured["drift_metrics"])
         base_metrics[fault.fault_id] = Metrics.model_validate(measured["base_metrics"])
@@ -652,17 +923,44 @@ def _phase_route(args: argparse.Namespace, config: Any, digest: str, libraries: 
         for method in _METHODS:
             candidate_path = _candidate_path(args.run_dir, fault.fault_id, method)
             if candidate_path.exists():
-                candidates.append(CandidateRecord.model_validate(read_json_artifact(candidate_path, root=args.run_dir)["candidate"]))
-    analysis = analyze_router(features, candidates, drift_metrics, observed_fault_ids=observed, base_metrics=base_metrics, seed=config.seed)
-    if len(observed) < 6 or len({feature.fault_type for feature in features if feature.fault_id in observed}) < 2:
+                candidates.append(
+                    CandidateRecord.model_validate(
+                        read_json_artifact(candidate_path, root=args.run_dir)["candidate"]
+                    )
+                )
+    analysis = analyze_router(
+        features,
+        candidates,
+        drift_metrics,
+        observed_fault_ids=observed,
+        base_metrics=base_metrics,
+        seed=config.seed,
+    )
+    if (
+        len(observed) < 6
+        or len({feature.fault_type for feature in features if feature.fault_id in observed}) < 2
+    ):
         analysis["router_decision"] = "H3_FALLBACK"
         analysis["router_reason"] = "insufficient observed cohort; no router claim"
     output = args.run_dir / "route" / "analysis.json"
     _write_json(output, analysis, args.run_dir)
-    return _record_stage(args.run_dir, "route", _result(status="success" if analysis["status"] == "success" else "inconclusive", config_hash=digest, libraries=libraries, started=started, outputs=[_file_id(output)], warnings=analysis.get("reasons", [])))
+    return _record_stage(
+        args.run_dir,
+        "route",
+        _result(
+            status="success" if analysis["status"] == "success" else "inconclusive",
+            config_hash=digest,
+            libraries=libraries,
+            started=started,
+            outputs=[_file_id(output)],
+            warnings=analysis.get("reasons", []),
+        ),
+    )
 
 
-def _dispatch(args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]) -> StageResult:
+def _dispatch(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
     handlers: dict[str, Callable[[argparse.Namespace, Any, str, dict[str, str]], StageResult]] = {
         "baseline": _phase_baseline,
         "first-proof": _phase_first_proof,
@@ -679,7 +977,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--data-manifest", type=Path, required=True)
-    parser.add_argument("--phase", choices=("baseline", "first-proof", "population", "diagnostics", "candidates", "route"), required=True)
+    parser.add_argument(
+        "--phase",
+        choices=("baseline", "first-proof", "population", "diagnostics", "candidates", "route"),
+        required=True,
+    )
     parser.add_argument("--deadline", type=_parse_deadline)
     parser.add_argument("--hard-budget", type=_parse_budget)
     parser.add_argument("--fault-id")
@@ -718,7 +1020,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as error:
         try:
             config_hash = _run_snapshot(_load_config(args.config), args.run_dir)[0]
-            result = _result(status="error", config_hash=config_hash, libraries={}, started=time.monotonic(), errors=[f"{type(error).__name__}: {error}"])
+            result = _result(
+                status="error",
+                config_hash=config_hash,
+                libraries={},
+                started=time.monotonic(),
+                errors=[f"{type(error).__name__}: {error}"],
+            )
             _record_stage(args.run_dir, f"{args.phase}-error", result, fault_id=args.fault_id)
         except Exception:
             print(f"{type(error).__name__}: {error}", file=sys.stderr)
