@@ -67,11 +67,7 @@ def _trusted_tool(*candidates: str) -> str:
             details = path.stat()
         except FileNotFoundError:
             continue
-        if (
-            path.is_file()
-            and details.st_uid == 0
-            and not (stat.S_IMODE(details.st_mode) & 0o022)
-        ):
+        if path.is_file() and details.st_uid == 0 and not (stat.S_IMODE(details.st_mode) & 0o022):
             return str(path)
     raise IsolationBlocked(f"required trusted executable is unavailable: {candidates[0]}")
 
@@ -97,12 +93,16 @@ def _ensure_identity(*, user: str, uid: int) -> None:
         raise IsolationBlocked(f"UID {uid} is already assigned to {holder.pw_name}")
 
     group = user
-    existing_group = grp.getgrnam(group) if group in {entry.gr_name for entry in grp.getgrall()} else None
+    existing_group = (
+        grp.getgrnam(group) if group in {entry.gr_name for entry in grp.getgrall()} else None
+    )
     if existing_group is not None and existing_group.gr_gid != uid:
         raise IsolationBlocked(f"{group} exists with GID {existing_group.gr_gid}, expected {uid}")
     if existing_group is None:
         groupadd = _trusted_tool("/usr/sbin/groupadd", "/usr/bin/groupadd")
-        subprocess.run([groupadd, "--gid", str(uid), group], check=True, env={"PATH": "/usr/sbin:/usr/bin"})
+        subprocess.run(
+            [groupadd, "--gid", str(uid), group], check=True, env={"PATH": "/usr/sbin:/usr/bin"}
+        )
     useradd = _trusted_tool("/usr/sbin/useradd", "/usr/bin/useradd")
     subprocess.run(
         [
@@ -158,13 +158,16 @@ def _readonly_tree(source: Path | str, *, label: str) -> Path:
             details = _lstat_regular(path)
             mode = stat.S_IMODE(details.st_mode)
             if details.st_uid not in {0, nobody} or mode & 0o022:
-                raise IsolationBlocked(f"{label} must be root/nobody-owned and non-writable: {path}")
+                raise IsolationBlocked(
+                    f"{label} must be root/nobody-owned and non-writable: {path}"
+                )
             required = 0o005 if stat.S_ISDIR(details.st_mode) else 0o004
             if mode & required != required:
                 raise IsolationBlocked(f"{label} is not readable by the gate UID: {path}")
     if stat.S_IMODE(root_details.st_mode) & 0o005 != 0o005:
         raise IsolationBlocked(f"{label} is not readable by the gate UID: {root}")
     return root
+
 
 def _immutable_tree(source: Path | str, *, label: str) -> Path:
     """Accept a frozen repair artifact without requiring the repair worker's UID."""
@@ -254,8 +257,13 @@ def _freeze_proof(
     proof = json.loads(Path(proof_path).read_text(encoding="utf-8"))
     expected_keys = {"candidate_sha256", "config_sha256", "router_selection_sha256"}
     if not isinstance(proof, dict) or set(proof) != expected_keys:
-        raise ValueError("freeze proof must contain exactly candidate/config/router selection hashes")
-    if any(not isinstance(proof[key], str) or not _SHA256.fullmatch(proof[key]) for key in expected_keys):
+        raise ValueError(
+            "freeze proof must contain exactly candidate/config/router selection hashes"
+        )
+    if any(
+        not isinstance(proof[key], str) or not _SHA256.fullmatch(proof[key])
+        for key in expected_keys
+    ):
         raise ValueError("freeze proof hashes must be lower-case SHA-256 hex")
     observed = {
         "candidate_sha256": tree_sha256(candidate),
@@ -263,7 +271,9 @@ def _freeze_proof(
         "router_selection_sha256": file_sha256(router_selection),
     }
     if proof != observed:
-        raise IsolationBlocked("freeze proof does not match candidate, config, and router selection")
+        raise IsolationBlocked(
+            "freeze proof does not match candidate, config, and router selection"
+        )
 
 
 def _owned_workdir(working_root: Path | str, job_name: str) -> Path:
@@ -331,7 +341,9 @@ def prepare_evaluator(
         fault_adapter is None or candidate_root is None or freeze_proof is None
     ):
         raise ValueError("candidate evaluation requires adapter, candidate, and freeze proof")
-    if target == "base" and any(value is not None for value in (fault_adapter, candidate_root, freeze_proof)):
+    if target == "base" and any(
+        value is not None for value in (fault_adapter, candidate_root, freeze_proof)
+    ):
         raise ValueError("base evaluation must not stage a fault adapter or candidate")
     ensure_isolation_identities()
     source = _readonly_tree(evaluator_source, label="evaluator source")
@@ -347,9 +359,15 @@ def prepare_evaluator(
     _lstat_regular(config, directory=False)
     _lstat_regular(router_selection, directory=False)
     if candidate is not None:
-        _freeze_proof(freeze_proof, candidate=candidate, config=config, router_selection=router_selection)
+        _freeze_proof(
+            freeze_proof, candidate=candidate, config=config, router_selection=router_selection
+        )
     request_relative = Path(request_name)
-    if request_relative.is_absolute() or ".." in request_relative.parts or request_relative.suffix != ".json":
+    if (
+        request_relative.is_absolute()
+        or ".." in request_relative.parts
+        or request_relative.suffix != ".json"
+    ):
         raise ValueError("request name must be a relative JSON path")
     request_source = inputs / request_relative
     _lstat_regular(request_source, directory=False)
@@ -404,12 +422,18 @@ def _trusted_gpu_library_path() -> str | None:
             details = directory.stat()
         except FileNotFoundError:
             continue
-        if directory.is_dir() and details.st_uid == 0 and not (stat.S_IMODE(details.st_mode) & 0o022):
+        if (
+            directory.is_dir()
+            and details.st_uid == 0
+            and not (stat.S_IMODE(details.st_mode) & 0o022)
+        ):
             approved.append(str(directory))
     return ":".join(approved) if approved else None
 
 
-def build_evaluator_command(paths: IsolationPaths, *, network_namespace: bool = False) -> list[str]:
+def build_evaluator_command(
+    paths: IsolationPaths, *, network_namespace: bool = False, use_gpu: bool = False
+) -> list[str]:
     """Build a fixed, credential-free command for the dedicated gate identity."""
     setpriv = _trusted_tool("/usr/bin/setpriv", "/bin/setpriv")
     runtime = paths.runtime.resolve(strict=True)
@@ -426,6 +450,8 @@ def build_evaluator_command(paths: IsolationPaths, *, network_namespace: bool = 
         "PYTHONDONTWRITEBYTECODE=1",
         "HOME=/nonexistent",
     ]
+    if use_gpu:
+        environment.append("NEUROFORGE_EVALUATOR_GPU=1")
     library_path = _trusted_gpu_library_path()
     if library_path is not None:
         environment.append(f"LD_LIBRARY_PATH={library_path}")
@@ -471,12 +497,12 @@ def _network_namespace_supported() -> bool:
     return completed.returncode == 0
 
 
-def run_evaluator(paths: IsolationPaths) -> IsolationRun:
+def run_evaluator(paths: IsolationPaths, *, use_gpu: bool = False) -> IsolationRun:
     """Run the existing evaluator only after proving root-controlled UID isolation."""
     _require_root()
     network_namespace = _network_namespace_supported()
     completed = subprocess.run(
-        build_evaluator_command(paths, network_namespace=network_namespace),
+        build_evaluator_command(paths, network_namespace=network_namespace, use_gpu=use_gpu),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -509,7 +535,10 @@ def _probe_command(uid: int, program: str) -> list[str]:
 
 
 def probe_authority(
-    paths: IsolationPaths, *, sealed_marker: str, source_probe_relative: str = "neuroforge/__init__.py"
+    paths: IsolationPaths,
+    *,
+    sealed_marker: str,
+    source_probe_relative: str = "neuroforge/__init__.py",
 ) -> dict[str, bool]:
     """Prove distinct UID authority with actual failed opens, not missing-path checks."""
     _require_root()
@@ -538,11 +567,19 @@ def probe_authority(
         "\nelse: sys.exit(5)"
     )
     repair_result = subprocess.run(
-        _probe_command(REPAIR_UID, repair), stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
+        _probe_command(REPAIR_UID, repair),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
     )
     gate_result = subprocess.run(
-        _probe_command(GATE_UID, gate), stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
+        _probe_command(GATE_UID, gate),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
     )
     result = {

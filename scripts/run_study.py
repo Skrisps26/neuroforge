@@ -1060,6 +1060,10 @@ def _run_isolated_eval(
     )
 
     ensure_isolation_identities()
+    from neuroforge.isolation import SEAL_ROOT
+
+    SEAL_ROOT.mkdir(parents=True, exist_ok=True)
+    os.chmod(SEAL_ROOT, 0o755)
     source = _compliant_evaluator_source()
     with tempfile.TemporaryDirectory(prefix="neuroforge-sealed-inputs-") as tmp:
         inputs_root = Path(tmp)
@@ -1088,7 +1092,7 @@ def _run_isolated_eval(
             router_selection_path=router_selection_path,
             target=target,
         )
-        completed = run_evaluator(paths)
+        completed = run_evaluator(paths, use_gpu=True)
         if completed.returncode != 0:
             raise IsolationBlocked(
                 f"isolated evaluator failed: returncode={completed.returncode} stderr={completed.stderr[-2000:]}"
