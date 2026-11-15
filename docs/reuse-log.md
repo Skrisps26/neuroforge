@@ -41,4 +41,8 @@ The core model is `CohereLabs/tiny-aya-global` at `af89d219b53ed9b13b8a4645f9c80
 
 ## Explicit non-claims and current boundary
 
-No NeuroForge model has been loaded, trained, diagnosed, repaired, or scored. No Tiny Aya execution, toolkit model execution, metric result, artifact/weight, Hub upload, cloud resource, or cloud spend exists. The confirmed package smoke is limited to the CuratorKIT and AuditKIT imports/signatures identified above. Any later report must add exact run IDs, command/config hashes, artifact hashes, and observed output before upgrading an API from imported to executed.
+The initial boundary above was package imports only. Subsequent verified execution: real CuratorKIT ingestion/deduplication froze 256 training, 60 development, 90 validation and 150 sealed records (`reports/data-curation-summary.json`); pinned Tiny Aya ran locally in NF4 and returned `4` to the harmless arithmetic smoke prompt (`runs/local-model-proof`), with 378 input tokens, 3 generated tokens and 2,694,060,544 peak allocated CUDA bytes. These are not baseline, repair, circuit or router results. No cloud resource or project cloud spend existed at this update.
+
+## Cloud staging adapter
+
+`uv`, pip, git, SSH, `huggingface_hub.get_hf_file_metadata` and standard HTTP/file-copy libraries cover installation, transport and Hub metadata. The small bootstrap/staging scripts only compose those tools with this project's pinned environment and hashes; they implement no Runpod client, model loader, quantizer or training loop. Gated HF account credentials stay local: only short-lived, file-scoped CDN download capabilities may cross encrypted SSH stdin, never MCP arguments, command arguments or logs. Local small model configuration/tokenizer files are transferred separately; source weights are checked against the frozen SHA-256 values. This avoids giving the pod an account-wide HF token.
