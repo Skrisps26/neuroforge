@@ -1228,9 +1228,6 @@ def _phase_sealed(
         )
         sealed_metrics[method] = result["metrics"]
         sealed_records[method] = result["score_records"]
-    manifest = read_manifest(
-        args.run_dir / "repairs" / fault.fault_id / "B0" / "manifest.json", root=args.run_dir
-    )
     base = sealed_metrics["base"]
     drifted = sealed_metrics["B0"]
     details: dict[str, Any] = {"targets": targets, "decisions": {}}
@@ -1286,7 +1283,6 @@ def _phase_sealed(
         )
         outputs.append(_file_id(metrics_path))
         details["decisions"][method] = decision.model_dump(mode="json")
-    _ = manifest
     return _record_stage(
         args.run_dir,
         "sealed",
