@@ -106,6 +106,7 @@ class CandidateRecord(ContractModel):
     wall_seconds: NonNegativeFloat
     split: Literal["development", "validation", "sealed"]
     seed: int
+    changed_parameter_count: NonNegativeInt | None = None
 
 
 class DiagnosticFeatures(ContractModel):

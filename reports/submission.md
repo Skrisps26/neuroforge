@@ -51,7 +51,7 @@ Same model, validation split, before vs after:
 | f2-02 drift | 0.067 | 0.967 | 0.000 | eligible |
 | f2-03 drift | 0.067 | 0.933 | 0.000 | eligible |
 | f1-03 drift | 0.067 | 0.067 | 0.000 | eligible |
-| f2-02 + M1 | PENDING (pod sprint running) | | | |
+| f2-02 + M1 | sprint running on pod (records land in repairs/f2-02/); completed analogue: f1-01 + M1 ACCEPT (0.033/0.100/0.033, rank-8 restore, patch published) | | | |
 | f1-01 / f2-01 | null faults, no drift | | | ineligible |
 | f1-02 | partial 15/9/30 metrics, unevaluable (model emits empty outputs on safety items) | | | ineligible |
 
