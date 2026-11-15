@@ -205,8 +205,13 @@ def test_verify_timer_matches_recorded_deadline(monkeypatch: pytest.MonkeyPatch)
     def fake_run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         if argv[:3] == ["systemctl", "--user", "is-active"]:
             return subprocess.CompletedProcess(argv, 0, "active\n", "")
+        # list-timers renders NEXT in the machine's local zone, not UTC.
+        local = datetime(2026, 11, 15, 7, 16, 11, tzinfo=cloud_watchdog.UTC).astimezone()
         return subprocess.CompletedProcess(
-            argv, 0, "NextElapseUSec=Sun 2026-11-15 07:16:11 UTC\n", ""
+            argv,
+            0,
+            f"NEXT LEFT LAST PASSED UNIT\n{local.strftime('%a %Y-%m-%d %H:%M:%S %Z')} 59min - - neuroforge-job-all.timer\n",
+            "",
         )
 
     monkeypatch.setattr(cloud_watchdog.subprocess, "run", fake_run)
@@ -227,6 +232,28 @@ def test_verify_timer_rejects_inactive_or_mismatched_schedule(
     monkeypatch.setattr(cloud_watchdog.subprocess, "run", inactive)
     deadline = datetime(2026, 11, 15, 7, 16, 11, tzinfo=cloud_watchdog.UTC)
     with pytest.raises(RuntimeError, match="not active"):
+        cloud_watchdog.verify_timer_armed("neuroforge-job-all.timer", deadline=deadline)
+
+
+def test_verify_timer_rejects_wrong_scheduled_minute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    def wrong_minute(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if argv[:3] == ["systemctl", "--user", "is-active"]:
+            return subprocess.CompletedProcess(argv, 0, "active\n", "")
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            "NEXT                         LEFT LAST PASSED UNIT\n"
+            "Sun 2026-11-15 08:16:11 UTC 59min -    -      neuroforge-job-all.timer\n",
+            "",
+        )
+
+    monkeypatch.setattr(cloud_watchdog.subprocess, "run", wrong_minute)
+    deadline = datetime(2026, 11, 15, 7, 16, 11, tzinfo=cloud_watchdog.UTC)
+    with pytest.raises(RuntimeError, match="not scheduled for the recorded deadline"):
         cloud_watchdog.verify_timer_armed("neuroforge-job-all.timer", deadline=deadline)
 
 

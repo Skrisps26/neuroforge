@@ -288,20 +288,25 @@ def verify_timer_armed(timer_unit: str, *, deadline: datetime) -> dict[str, str]
     )
     if active.stdout.strip() != "active":
         raise RuntimeError(f"watchdog timer is not active: {timer_unit}")
-    shown = subprocess.run(
-        ["systemctl", "--user", "show", timer_unit, "--property=NextElapseUSec"],
+    listed = subprocess.run(
+        ["systemctl", "--user", "list-timers", "--no-pager", "--all"],
         shell=False,
         check=False,
         text=True,
         capture_output=True,
     )
-    if shown.returncode != 0:
-        raise RuntimeError(f"could not read watchdog timer schedule: {timer_unit}")
-    if deadline.strftime("%Y-%m-%d %H:%M") not in shown.stdout:
+    if listed.returncode != 0:
+        raise RuntimeError(f"could not list watchdog timers: {listed.stderr.strip()}")
+    line = next((ln for ln in listed.stdout.splitlines() if timer_unit in ln), "")
+    if not line:
+        raise RuntimeError(f"watchdog timer is not scheduled: {timer_unit}")
+    # list-timers renders NEXT in the *local* zone; compare in local time.
+    local_deadline = deadline.astimezone()
+    if local_deadline.strftime("%Y-%m-%d %H:%M") not in line:
         raise RuntimeError(
-            f"watchdog timer is not scheduled for the recorded deadline: {shown.stdout.strip()}"
+            f"watchdog timer is not scheduled for the recorded deadline: {line.strip()}"
         )
-    return {"unit": timer_unit, "next": shown.stdout.strip()}
+    return {"unit": timer_unit, "next": line.strip()}
 
 
 def _parse_arguments() -> argparse.Namespace:
