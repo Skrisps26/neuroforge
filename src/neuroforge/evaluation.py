@@ -57,6 +57,7 @@ def _mount(source: Path, destination: str, *, read_only: bool = True) -> str:
     suffix = ",ro" if read_only else ""
     return f"type=bind,src={source},dst={destination}{suffix}"
 
+
 def _evaluator_path(*parts: str) -> Path:
     """Return a fixed path, optionally rooted in a parent-owned UID workspace."""
     root = os.environ.get("NEUROFORGE_EVALUATOR_ROOT")
@@ -100,15 +101,30 @@ def build_evaluator_command(
         _mount(source, "/app"),
         _mount(inputs, "/inputs"),
         _mount(output, "/output", read_only=False),
-        _mount(_require_path(guardian_model, directory=True, label="guardian model"), "/models/guardian"),
+        _mount(
+            _require_path(guardian_model, directory=True, label="guardian model"),
+            "/models/guardian",
+        ),
         _mount(_require_path(base_model, directory=True, label="base model"), "/models/base"),
-        _mount(_require_path(fault_adapter, directory=True, label="fault adapter"), "/models/fault-adapter"),
+        _mount(
+            _require_path(fault_adapter, directory=True, label="fault adapter"),
+            "/models/fault-adapter",
+        ),
         _mount(_require_path(candidate_root, directory=True, label="candidate root"), "/candidate"),
     ]
     if site_packages is not None:
-        mounts.append(_mount(_require_path(site_packages, directory=True, label="site-packages"), "/opt/site-packages"))
+        mounts.append(
+            _mount(
+                _require_path(site_packages, directory=True, label="site-packages"),
+                "/opt/site-packages",
+            )
+        )
     if sealed_inputs_root is not None:
-        mounts.append(_mount(_require_path(sealed_inputs_root, directory=True, label="sealed inputs"), "/sealed"))
+        mounts.append(
+            _mount(
+                _require_path(sealed_inputs_root, directory=True, label="sealed inputs"), "/sealed"
+            )
+        )
 
     relative_request = request.relative_to(inputs)
     argv = [
@@ -135,10 +151,18 @@ def build_evaluator_command(
         argv.extend(("--device", "nvidia.com/gpu=all", "--env", "NEUROFORGE_EVALUATOR_GPU=1"))
     for mount in mounts:
         argv.extend(("--mount", mount))
-    argv.extend((
-        image, "python", "-m", "neuroforge.evaluation", "--input",
-        f"/inputs/{relative_request}", "--output", "/output/metrics.json",
-    ))
+    argv.extend(
+        (
+            image,
+            "python",
+            "-m",
+            "neuroforge.evaluation",
+            "--input",
+            f"/inputs/{relative_request}",
+            "--output",
+            "/output/metrics.json",
+        )
+    )
     return argv
 
 
@@ -163,14 +187,25 @@ def build_isolation_probe_command(
         "'readonly_probe_write_blocked':w,'readonly_probe_readable':a,'passed':r and w and a},sort_keys=True))"
     )
     return [
-        "podman", "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
-        "--security-opt=no-new-privileges", "--security-opt=label=disable",
-        "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-        "--env", "HOME=/tmp", "--mount", _mount(probe_file, "/probe/readonly-gate"), image,
-        "python", "-c", probe,
+        "podman",
+        "run",
+        "--rm",
+        "--network=none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--security-opt=label=disable",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=64m",
+        "--env",
+        "HOME=/tmp",
+        "--mount",
+        _mount(probe_file, "/probe/readonly-gate"),
+        image,
+        "python",
+        "-c",
+        probe,
     ]
-
-
 
 
 def _require_items(items: list[DataItem]) -> dict[str, DataItem]:
@@ -209,7 +244,11 @@ def _validate_responses(
         for field in ("truncated_to_empty", "complete", "max_tokens_hit"):
             if field in response and not isinstance(response[field], bool):
                 raise ValueError(f"response {sample_id} has non-boolean {field}")
-        if "error" in response and response["error"] is not None and not isinstance(response["error"], str):
+        if (
+            "error" in response
+            and response["error"] is not None
+            and not isinstance(response["error"], str)
+        ):
             raise ValueError(f"response {sample_id} has non-string error")
         indexed_responses[sample_id] = response
     missing = set(indexed_items).difference(indexed_responses)
@@ -318,7 +357,9 @@ def score_response_records(
                         metric="guardian",
                         errors=errors,
                     )
-                    failure = errors[-1].split(":", 2)[-1] if len(errors) > previous_errors else None
+                    failure = (
+                        errors[-1].split(":", 2)[-1] if len(errors) > previous_errors else None
+                    )
                     emit(item, scorer, value, failure)
                     if value is not None:
                         safety.append(value)
@@ -334,7 +375,9 @@ def score_response_records(
                         metric="overrefusal",
                         errors=errors,
                     )
-                    failure = errors[-1].split(":", 2)[-1] if len(errors) > previous_errors else None
+                    failure = (
+                        errors[-1].split(":", 2)[-1] if len(errors) > previous_errors else None
+                    )
                     emit(item, scorer, value, failure)
                     if value is not None:
                         benign.append(value)
@@ -354,7 +397,9 @@ def score_response_records(
                         metric="utility",
                         errors=errors,
                     )
-                    failure = errors[-1].split(":", 2)[-1] if len(errors) > previous_errors else None
+                    failure = (
+                        errors[-1].split(":", 2)[-1] if len(errors) > previous_errors else None
+                    )
                     emit(item, scorer, value, failure)
                     if value is not None:
                         utility.append(value)
@@ -505,6 +550,7 @@ def _read_response_json(input_path: Path, raw_path: Any) -> list[dict[str, Any]]
         raise ValueError("responses_path must contain only response objects")
     return value
 
+
 def _load_frozen_request(payload: Any) -> tuple[str, str, dict[str, str], Any]:
     """Validate the evaluator's immutable request before opening model artifacts."""
     from .contracts import RunConfig, config_hash
@@ -539,7 +585,9 @@ def _load_frozen_request(payload: Any) -> tuple[str, str, dict[str, str], Any]:
     return mode, target, hashes, config
 
 
-def _generation_failure_records(items: list[DataItem], error: Exception | str) -> list[dict[str, Any]]:
+def _generation_failure_records(
+    items: list[DataItem], error: Exception | str
+) -> list[dict[str, Any]]:
     """Record a generation failure for every item without substituting precomputed output."""
     return [
         {
@@ -552,6 +600,7 @@ def _generation_failure_records(items: list[DataItem], error: Exception | str) -
         }
         for item in items
     ]
+
 
 def _fault_adapter_hashes(adapter_root: Path) -> dict[str, str]:
     """Hash exactly the mounted adapter files; symlinks cannot smuggle another root."""
@@ -576,7 +625,10 @@ def _verify_fault_adapter_hashes(adapter_root: Path, parameters: Any) -> None:
     if (
         not isinstance(expected, dict)
         or not expected
-        or any(not isinstance(path, str) or not isinstance(digest, str) for path, digest in expected.items())
+        or any(
+            not isinstance(path, str) or not isinstance(digest, str)
+            for path, digest in expected.items()
+        )
     ):
         raise ValueError("candidate manifest lacks fault_adapter_hashes")
     observed = _fault_adapter_hashes(adapter_root)
@@ -653,22 +705,29 @@ def _main() -> int:
             if mode == "score"
             else _generate_evaluator_responses(items, config, target=target)
         )
+        score_records: list[dict[str, Any]] = []
         metrics = evaluate_responses(
             items,
             responses,
             guardian_model=str(_evaluator_path("models", "guardian")),
             guardian_revision=config.guardian_revision,
             guardian_device="cuda" if os.environ.get("NEUROFORGE_EVALUATOR_GPU") == "1" else "cpu",
+            score_records_out=score_records,
         )
-        status = "ERROR" if metrics.evaluation_errors else (
-            "SUCCESS" if metrics.complete else "INCONCLUSIVE"
+        status = (
+            "ERROR"
+            if metrics.evaluation_errors
+            else ("SUCCESS" if metrics.complete else "INCONCLUSIVE")
         )
+        # Score records carry per-item categories and numeric values only; response
+        # text never leaves the isolated workspace through this channel.
         result = {
             "config_hashes": hashes,
             "mode": mode,
             "target": target,
             "status": status,
             "responses": responses,
+            "score_records": score_records,
             "metrics": metrics.model_dump(),
         }
         output_parent = _evaluator_path("output")

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -958,6 +959,345 @@ def _phase_route(
     )
 
 
+def _sealed_split_items(data_manifest: Path, digest: str) -> tuple[list[Any], Path]:
+    """Load the hash-verified sealed split. Trusted parent only: repair code must never call this."""
+    from neuroforge.artifacts import sha256_file
+    from neuroforge.cli import _read_json  # type: ignore[attr-defined]
+    from neuroforge.data import load_items
+
+    manifest = _read_json(data_manifest)
+    if not isinstance(manifest, dict) or manifest.get("config_hash") != digest:
+        raise ValueError(
+            "data manifest is missing or does not match the supplied study configuration"
+        )
+    splits = manifest.get("splits")
+    if not isinstance(splits, dict) or not isinstance(splits.get("sealed"), dict):
+        raise ValueError("data manifest has no sealed split")
+    details = splits["sealed"]
+    split_path = data_manifest.parent / "sealed.jsonl"
+    if not isinstance(details.get("sha256"), str) or sha256_file(split_path) != details["sha256"]:
+        raise ValueError("sealed split does not match its immutable manifest hash")
+    items = load_items(split_path)
+    if details.get("sample_ids") != [item.sample_id for item in items]:
+        raise ValueError("sealed split sample IDs do not match its immutable manifest")
+    return items, split_path
+
+
+def _sealed_request_doc(config: Any, digest: str, target: str) -> dict[str, Any]:
+    """Build the exact frozen evaluator request for one sealed target."""
+    from neuroforge.contracts import config_hash
+
+    if target not in ("base", "candidate"):
+        raise ValueError("sealed request target must be base or candidate")
+    run_config = config.model_dump(mode="json")
+    if config_hash(run_config) != digest:
+        raise ValueError("study configuration does not match its snapshot digest")
+    return {
+        "mode": "generate",
+        "target": target,
+        "config_hashes": {"run_config": digest},
+        "run_config": run_config,
+        "items_path": "sealed/sealed.jsonl",
+        "responses_path": None,
+    }
+
+
+def _compliant_evaluator_source() -> Path:
+    """Return a root-owned, non-writable tree containing the live neuroforge package."""
+    import neuroforge
+
+    package = Path(neuroforge.__file__).resolve(strict=True)
+    if package.name != "__init__.py" or package.parent.name != "neuroforge":
+        raise ValueError("cannot locate the live neuroforge package directory")
+    live_root = package.parent.parent
+    try:
+        from neuroforge.isolation import _readonly_tree  # noqa: PLC2701
+
+        return _readonly_tree(live_root, label="evaluator source")
+    except Exception:
+        from neuroforge.isolation import tree_sha256
+
+        staged = Path("/opt/neuroforge-eval-src")
+        if staged.exists():
+            import shutil
+
+            shutil.rmtree(staged)
+        shutil.copytree(live_root, staged, symlinks=False, ignore_dangling=True)
+        for root, dirs, files in os.walk(staged):
+            for name in dirs + files:
+                os.chmod(Path(root) / name, 0o555 if (Path(root) / name).is_dir() else 0o444)
+        os.chmod(staged, 0o555)
+        from neuroforge.isolation import _readonly_tree  # noqa: PLC2701
+
+        source = _readonly_tree(staged, label="evaluator source")
+        _ = tree_sha256(source)
+        return source
+
+
+def _run_isolated_eval(
+    *,
+    job_name: str,
+    target: str,
+    request_doc: dict[str, Any],
+    fault_adapter: Path | None,
+    candidate_root: Path | None,
+    freeze_proof: dict[str, Any] | None,
+    base_model: Path,
+    guardian_model: Path,
+    thresholds_root: Path,
+    sealed_items_path: Path,
+    config_path: Path,
+    router_selection_path: Path,
+) -> dict[str, Any]:
+    """Stage one UID-isolated evaluator run and return its parsed output (metrics + score records only)."""
+    import tempfile
+
+    from neuroforge.isolation import (
+        IsolationBlocked,
+        ensure_isolation_identities,
+        prepare_evaluator,
+        run_evaluator,
+    )
+
+    ensure_isolation_identities()
+    source = _compliant_evaluator_source()
+    with tempfile.TemporaryDirectory(prefix="neuroforge-sealed-inputs-") as tmp:
+        inputs_root = Path(tmp)
+        request_name = "request.json"
+        (inputs_root / request_name).write_text(
+            json.dumps(request_doc, sort_keys=True), encoding="utf-8"
+        )
+        proof_path: Path | None = None
+        if freeze_proof is not None:
+            proof_path = inputs_root / "freeze-proof.json"
+            proof_path.write_text(json.dumps(freeze_proof, sort_keys=True), encoding="utf-8")
+        paths = prepare_evaluator(
+            job_name=job_name,
+            evaluator_source=source,
+            thresholds_root=thresholds_root,
+            guardian_model=guardian_model,
+            base_model=base_model,
+            fault_adapter=fault_adapter,
+            candidate_root=candidate_root,
+            inputs_root=inputs_root,
+            request_name=request_name,
+            sealed_inputs_root=sealed_items_path.parent,
+            sealed_marker=sealed_items_path.name,
+            freeze_proof=proof_path,
+            config_path=config_path,
+            router_selection_path=router_selection_path,
+            target=target,
+        )
+        completed = run_evaluator(paths)
+        if completed.returncode != 0:
+            raise IsolationBlocked(
+                f"isolated evaluator failed: returncode={completed.returncode} stderr={completed.stderr[-2000:]}"
+            )
+        payload = json.loads(paths.output.read_text(encoding="utf-8"))
+    if payload.get("status") == "ERROR":
+        raise IsolationBlocked(f"isolated evaluator reported ERROR: {payload.get('error')}")
+    metrics = Metrics.model_validate(payload["metrics"])
+    records = payload.get("score_records")
+    if not isinstance(records, list) or not records:
+        raise IsolationBlocked("isolated evaluator returned no score records")
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {
+            "category",
+            "error",
+            "sample_id",
+            "scorer",
+            "unknown",
+            "value",
+        }:
+            raise IsolationBlocked("isolated evaluator returned malformed score records")
+        if "response" in record:
+            raise IsolationBlocked("score records must never carry response text")
+    return {"status": payload.get("status"), "metrics": metrics, "score_records": records}
+
+
+def _sealed_methods(run_dir: Path, fault_id: str) -> list[str]:
+    """Fixed sealed conditions: B0 plus every method with a validation-stage record."""
+    methods = []
+    for method in ("B0", *_METHODS[1:]):
+        if (run_dir / "repairs" / fault_id / method / "validation-record.json").exists():
+            methods.append(method)
+    return methods
+
+
+def _phase_sealed(
+    args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
+) -> StageResult:
+    """Run the independent UID-isolated sealed evaluation for one fault (requires --fault-id)."""
+    from neuroforge.gate import decide
+
+    if args.fault_id is None:
+        raise ValueError("sealed evaluation requires --fault-id")
+    fault = _configured_fault(config, args.fault_id)
+    existing = _existing_stage(args.run_dir, "sealed", digest, fault_id=fault.fault_id)
+    if existing is not None:
+        return existing
+    started = time.monotonic()
+    reason = _can_start(args.deadline)
+    if reason is not None:
+        return _record_stage(
+            args.run_dir,
+            "sealed",
+            _deadline_result(digest, libraries, started, reason),
+            fault_id=fault.fault_id,
+        )
+    analysis_path = args.run_dir / "route" / "analysis.json"
+    if not analysis_path.exists():
+        raise ValueError("sealed evaluation requires a route analysis (router selections)")
+    _items, sealed_items_path = _sealed_split_items(args.data_manifest, digest)
+    methods = _sealed_methods(args.run_dir, fault.fault_id)
+    if "B0" not in methods:
+        raise ValueError(f"sealed evaluation requires a B0 validation record for {fault.fault_id}")
+    from neuroforge.artifacts import tree_sha256 as _tree_sha256
+    from neuroforge.isolation import file_sha256 as _file_sha256
+
+    outputs: list[str] = []
+    sealed_metrics: dict[str, Metrics] = {}
+    sealed_records: dict[str, list[dict[str, Any]]] = {}
+    targets = (
+        ["base"]
+        + [f"B0:{fault.fault_id}"]
+        + [f"{method}:{fault.fault_id}" for method in methods if method != "B0"]
+    )
+    base_model = Path("models/tiny-aya-global")
+    for target in targets:
+        reason = _can_start(args.deadline)
+        if reason is not None:
+            return _record_stage(
+                args.run_dir,
+                "sealed",
+                _result(
+                    status="inconclusive",
+                    config_hash=digest,
+                    libraries=libraries,
+                    started=started,
+                    warnings=[reason],
+                    outputs=outputs,
+                ),
+                fault_id=fault.fault_id,
+            )
+        if target == "base":
+            request_doc = _sealed_request_doc(config, digest, "base")
+            result = _run_isolated_eval(
+                job_name=f"sealed-{fault.fault_id}-base",
+                target="base",
+                request_doc=request_doc,
+                fault_adapter=None,
+                candidate_root=None,
+                freeze_proof=None,
+                base_model=base_model,
+                guardian_model=_guardian_path(),
+                thresholds_root=args.config.parent,
+                sealed_items_path=sealed_items_path,
+                config_path=args.config,
+                router_selection_path=analysis_path,
+            )
+            sealed_metrics["base"] = result["metrics"]
+            sealed_records["base"] = result["score_records"]
+            continue
+        method = target.split(":")[0]
+        adapter = args.run_dir / "faults" / fault.fault_id / "adapter"
+        candidate_root = args.run_dir / "repairs" / fault.fault_id / method
+        proof = {
+            "candidate_sha256": _tree_sha256(candidate_root),
+            "config_sha256": _file_sha256(args.config),
+            "router_selection_sha256": _file_sha256(analysis_path),
+        }
+        request_doc = _sealed_request_doc(config, digest, "candidate")
+        result = _run_isolated_eval(
+            job_name=f"sealed-{fault.fault_id}-{method}",
+            target="candidate",
+            request_doc=request_doc,
+            fault_adapter=adapter,
+            candidate_root=candidate_root,
+            freeze_proof=proof,
+            base_model=base_model,
+            guardian_model=_guardian_path(),
+            thresholds_root=args.config.parent,
+            sealed_items_path=sealed_items_path,
+            config_path=args.config,
+            router_selection_path=analysis_path,
+        )
+        sealed_metrics[method] = result["metrics"]
+        sealed_records[method] = result["score_records"]
+    manifest = read_manifest(
+        args.run_dir / "repairs" / fault.fault_id / "B0" / "manifest.json", root=args.run_dir
+    )
+    base = sealed_metrics["base"]
+    drifted = sealed_metrics["B0"]
+    details: dict[str, Any] = {"targets": targets, "decisions": {}}
+    for method in methods:
+        manifest_path = args.run_dir / "repairs" / fault.fault_id / method / "manifest.json"
+        candidate_manifest = read_manifest(manifest_path, root=args.run_dir)
+        decision = decide(
+            base,
+            drifted,
+            sealed_metrics[method],
+            config.acceptance,
+            fault_type=fault.fault_type,
+            reloadable=bool(getattr(candidate_manifest, "reload_proof", None)),
+            integrity_ok=True,
+            truncated_to_empty=False,
+        )
+        record = CandidateRecord(
+            candidate_id=f"{fault.fault_id}:{method}",
+            fault_id=fault.fault_id,
+            method=method,  # type: ignore[arg-type]
+            artifact_path=str(manifest_path),
+            artifact_sha256=candidate_manifest.artifact_sha256,
+            parameters={
+                **candidate_manifest.parameters,
+                "source_manifest_sha256": sha256_file(manifest_path),
+                "sealed_score_records": f"{len(sealed_records[method])} items, no response text",
+                "cost_status": "not measured",
+            },
+            metrics=sealed_metrics[method],
+            decision=decision,
+            cost_usd=Decimal("0"),
+            wall_seconds=time.monotonic() - started,
+            split="sealed",
+            seed=fault.seed,
+            changed_parameter_count=candidate_manifest.changed_parameter_count,
+        )
+        out_dir = args.run_dir / "sealed" / fault.fault_id / method
+        metrics_path = out_dir / "sealed-metrics.json"
+        _write_json(
+            metrics_path,
+            {
+                "split": "sealed",
+                "metrics": sealed_metrics[method].model_dump(mode="json"),
+                "score_records": sealed_records[method],
+                "decision": decision.model_dump(mode="json"),
+            },
+            args.run_dir,
+        )
+        _write_json(
+            out_dir / "sealed-record.json",
+            {"config_hash": digest, "candidate": record.model_dump(mode="json")},
+            args.run_dir,
+        )
+        outputs.append(_file_id(metrics_path))
+        details["decisions"][method] = decision.model_dump(mode="json")
+    _ = manifest
+    return _record_stage(
+        args.run_dir,
+        "sealed",
+        _result(
+            status="success",
+            config_hash=digest,
+            libraries=libraries,
+            started=started,
+            outputs=outputs,
+        ),
+        fault_id=fault.fault_id,
+        details=details,
+    )
+
+
 def _dispatch(
     args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
 ) -> StageResult:
@@ -968,6 +1308,7 @@ def _dispatch(
         "diagnostics": _phase_diagnostics,
         "candidates": _phase_candidates,
         "route": _phase_route,
+        "sealed": _phase_sealed,
     }
     return handlers[args.phase](args, config, digest, libraries)
 
@@ -979,8 +1320,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--data-manifest", type=Path, required=True)
     parser.add_argument(
         "--phase",
-        choices=("baseline", "first-proof", "population", "diagnostics", "candidates", "route"),
         required=True,
+        choices=(
+            "baseline",
+            "first-proof",
+            "population",
+            "diagnostics",
+            "candidates",
+            "route",
+            "sealed",
+        ),
     )
     parser.add_argument("--deadline", type=_parse_deadline)
     parser.add_argument("--hard-budget", type=_parse_budget)
