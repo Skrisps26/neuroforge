@@ -27,6 +27,9 @@ commit message overstates this as "reproduced deterministically". Job 08 ships
 a runs/-free bundle and regenerates the baseline for real (deadline permitting).
 Rule going forward: cloud bundles never include `runs/`; pod run dirs regenerate
 every record they claim.
+Follow-up 09:35 UTC: job 08 regenerated the baseline from scratch on a fresh pod
+with a runs-free bundle. Validation metrics match jobs 04/06 exactly (safety
+0.0333, over-refusal 0.1, utility 0.0667): cross-pod determinism confirmed for real.
 
 Lesson: never use shell fallback chains (`||`) with `scp` destinations during
 deadline exports; pull into per-job staging directories and promote with
