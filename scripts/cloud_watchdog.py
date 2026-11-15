@@ -239,6 +239,10 @@ def arm_canary(marker_path: Path, *, unit_name: str, delay_seconds: int = 75) ->
     if not 5 <= delay_seconds <= 300:
         raise ValueError("canary delay must be between 5 and 300 seconds")
     marker = Path(marker_path).expanduser()
+    if not marker.is_absolute():
+        raise ValueError(
+            "canary marker path must be absolute: transient timers run outside the caller directory"
+        )
     if marker.exists():
         raise ValueError(f"canary marker already exists: {marker}")
     timer_unit = f"{unit_name}.timer"
@@ -257,7 +261,7 @@ def arm_canary(marker_path: Path, *, unit_name: str, delay_seconds: int = 75) ->
     return {"unit": timer_unit, "marker": str(marker)}
 
 
-def require_canary(marker_path: Path, *, timeout_seconds: int = 150) -> None:
+def require_canary(marker_path: Path, *, timeout_seconds: int = 300) -> None:
     """Block until the canary marker carries the exact expected content."""
     marker = Path(marker_path).expanduser()
     deadline = time.monotonic() + timeout_seconds

@@ -228,3 +228,11 @@ def test_verify_timer_rejects_inactive_or_mismatched_schedule(
     deadline = datetime(2026, 11, 15, 7, 16, 11, tzinfo=cloud_watchdog.UTC)
     with pytest.raises(RuntimeError, match="not active"):
         cloud_watchdog.verify_timer_armed("neuroforge-job-all.timer", deadline=deadline)
+
+
+def test_canary_rejects_relative_marker_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="must be absolute"):
+        cloud_watchdog.arm_canary(Path("relative.marker"), unit_name="neuroforge-canary-test")
