@@ -206,6 +206,7 @@ def train_fault(
                     "f2_every_second_refusal": fault.fault_type == "F2",
                 },
                 "adapter_path": "adapter",
+                "adapter_hashes": {name: str(digest) for name, digest in sorted(adapter_hashes.items())},
                 "train_result": {
                     "metrics": dict(train_result.metrics),
                     "global_step": train_global_step,

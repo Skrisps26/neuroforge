@@ -476,7 +476,7 @@ def _candidate(
                     "cost_status": "not measured",
                 },
                 metrics=metrics, decision=decision, cost_usd=Decimal("0"), wall_seconds=time.monotonic() - started,
-                split="validation", seed=fault.seed,
+                split="validation", seed=fault.seed, changed_parameter_count=manifest.changed_parameter_count,
             )
     except Exception as error:
         record = _candidate_error(fault, method, f"{type(error).__name__}: {error}", wall_seconds=time.monotonic() - started)
