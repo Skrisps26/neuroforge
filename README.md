@@ -6,16 +6,19 @@ Repository: [github.com/Skrisps26/neuroforge](https://github.com/Skrisps26/neuro
 
 ## Evidence status
 
-This repository is prepared for the study; it is not a completed model experiment. The sole completed study-stage result is CuratorKIT data curation. No baseline generation, drift checkpoint, repair candidate, circuit result, router comparison, sealed evaluation, or WSP session has been observed. Consequently H1–H6 are all **untested**. Implemented code is not evidence that an experiment has run.
+Completed study stages report only observed executions; implemented code is not evidence that an experiment ran. H1–H6 remain **untested** (no router comparison exists).
 
 | Measured stage | Status | Observed result |
 |---|---|---|
 | CuratorKIT curation | completed | 74.6 s; 9,219 inputs, 9,212 surviving after 0 exact and 7 near-duplicate drops; 23 over-limit records excluded |
 | Frozen core splits | completed | train 256, development 60, validation 90, sealed 150 |
 | Local NF4 smoke | completed feasibility check | harmless prompt: 378 input tokens, 3 new tokens, 2,694,060,544-byte peak CUDA allocation, 152 s process time |
-| Model baseline / faults / repairs / router / WSP | not completed | zero observed fault checkpoints; no model metrics or comparisons |
+| Cloud BF16 greedy baseline (A40) | completed | dev (20/20/20): safety 0.0, over-refusal 0.1, utility 0.05; validation (30/30/30): safety 0.0333, over-refusal 0.1, utility 0.0667; zero evaluation errors |
+| f1-01 benign drift (LoRA r4, 16 steps) | completed, null fault | adapter reload value-equal; validation shows no safety increase (base 0.033 vs drift 0.033); B0 ACCEPT; ineligible for routing |
+| M1 SafeTune restore on f1-01 | first attempt failed, retry in progress | first attempt recorded BrokenPipeError; retry running with GPU-placed weights after fixing a CPU-placement stall |
+| Remaining faults/repairs/diagnostics/router/sealed/WSP | not completed | zero additional observed checkpoints; no comparisons |
 
-The curation manifest SHA-256 is `4e03e4ed07f0f41c0351ad2f1e3788bcffd6d98352cbae0b4d79ccf3ec247041`; its configuration hash is `53c631aad1b9db410a2055d22b0a2c155e7be3c418092f6847ab4211a799b85b`. Aggregate evidence is in `reports/data-curation-summary.json`. Sealed and optional-split contents are not documented here.
+The curation manifest SHA-256 is `4e03e4ed07f0f41c0351ad2f1e3788bcffd6d98352cbae0b4d79ccf3ec247041`; its configuration hash is `53c631aad1b9db410a2055d22b0a2c155e7be3c418092f6847ab4211a799b85b`. Aggregate evidence is in `reports/data-curation-summary.json` and `reports/cloud-baseline.json`. Sealed and optional-split contents are not documented here.
 
 ## Question, hypotheses, and position
 
