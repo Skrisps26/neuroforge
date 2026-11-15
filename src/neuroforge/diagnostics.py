@@ -5,6 +5,7 @@ activation patching, and CircuitKIT supplies attribution and random controls.  T
 module only composes those fixed APIs with the preregistered prompt/budget/provenance
 rules; it does not implement a substitute circuit, patch hook, or SVD algorithm.
 """
+
 from __future__ import annotations
 
 import copy
@@ -19,7 +20,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .artifacts import write_json_artifact
-from .contracts import DataItem, DiagnosticFeatures, FaultConfig, RunConfig, StageResult, config_hash
+from .contracts import (
+    DataItem,
+    DiagnosticFeatures,
+    FaultConfig,
+    RunConfig,
+    StageResult,
+    config_hash,
+)
 
 _BOUNDARY_LAYERS = (0, 6, 12, 18, 24, 30)
 _QV_WEIGHT = re.compile(r"(?:^|\.)(?:q_proj|v_proj)\.weight$")
@@ -47,7 +55,8 @@ class _D2ParityFailure(RuntimeError):
         detail: str | None = None,
     ) -> None:
         super().__init__(
-            detail or f"{checkpoint} HF/TransformerLens next-token parity failed for {sample_id}: KL={kl:.6g}"
+            detail
+            or f"{checkpoint} HF/TransformerLens next-token parity failed for {sample_id}: KL={kl:.6g}"
         )
         self.checkpoint = checkpoint
         self.sample_id = sample_id
@@ -104,7 +113,9 @@ def compute_qv_drift(base_state: Mapping[str, Any], drifted_state: Mapping[str, 
     """
     import torch
 
-    eligible = sorted(set(_qv_weight_names(base_state)).intersection(_qv_weight_names(drifted_state)))
+    eligible = sorted(
+        set(_qv_weight_names(base_state)).intersection(_qv_weight_names(drifted_state))
+    )
     total_delta_energy = 0.0
     total_base_energy = 0.0
     weighted_rank = 0.0
@@ -118,7 +129,9 @@ def compute_qv_drift(base_state: Mapping[str, Any], drifted_state: Mapping[str, 
         if not isinstance(base, torch.Tensor) or not isinstance(drifted, torch.Tensor):
             raise TypeError(f"{name} must be a torch.Tensor in both checkpoints")
         if base.shape != drifted.shape or base.ndim != 2:
-            raise ValueError(f"incompatible q/v matrix for {name}: {tuple(base.shape)} vs {tuple(drifted.shape)}")
+            raise ValueError(
+                f"incompatible q/v matrix for {name}: {tuple(base.shape)} vs {tuple(drifted.shape)}"
+            )
         base32 = base.detach().to(dtype=torch.float32)
         delta = drifted.detach().to(device=base32.device, dtype=torch.float32) - base32
         base_energy = float(torch.sum(base32.square()).item())
@@ -211,7 +224,9 @@ def minimum_restoring_rank(
             target_recovery=None,
             observations=observations,
             evaluator_calls=len(observations),
-            warnings=("minimum restoring rank is undefined because the base-to-drift proxy gap is not positive",),
+            warnings=(
+                "minimum restoring rank is undefined because the base-to-drift proxy gap is not positive",
+            ),
         )
 
     target = zero_score + target_fraction * gap
@@ -231,7 +246,9 @@ def minimum_restoring_rank(
 
     low, high = 0, adapter_rank
     bisections = 0
-    while high - low > 1 and bisections < max_bisections and len(observations) < max_evaluator_calls:
+    while (
+        high - low > 1 and bisections < max_bisections and len(observations) < max_evaluator_calls
+    ):
         mid = low + (high - low) // 2
         score = observe(mid)
         ordered = [observations[rank] for rank in sorted(observations)]
@@ -244,7 +261,9 @@ def minimum_restoring_rank(
                 target_recovery=target_fraction,
                 observations=observations,
                 evaluator_calls=len(observations),
-                warnings=("nonmonotone restoring-rank proxy; minimum is undefined and only a measured passing upper bound is reported",),
+                warnings=(
+                    "nonmonotone restoring-rank proxy; minimum is undefined and only a measured passing upper bound is reported",
+                ),
             )
         if score >= target:
             high = mid
@@ -273,7 +292,10 @@ def minimum_restoring_rank(
         target_recovery=target_fraction,
         observations=observations,
         evaluator_calls=len(observations),
-        warnings=tuple(warnings or ["minimum restoring rank is undefined because the bisection bracket is incomplete"]),
+        warnings=tuple(
+            warnings
+            or ["minimum restoring rank is undefined because the bisection bracket is incomplete"]
+        ),
     )
 
 
@@ -304,7 +326,9 @@ def _fault_for_model(config: RunConfig, drifted_model: Any) -> FaultConfig:
         raise ValueError(f"drifted model names unknown fault {fault_id!r}")
     if len(config.faults) == 1:
         return config.faults[0]
-    raise ValueError("drifted model must expose neuroforge_fault_id when configuration has multiple faults")
+    raise ValueError(
+        "drifted model must expose neuroforge_fault_id when configuration has multiple faults"
+    )
 
 
 def _development_items(devitems: Sequence[DataItem]) -> tuple[list[DataItem], list[DataItem]]:
@@ -327,7 +351,9 @@ def _chat_input_ids(tokenizer: Any, prompt: str, config: RunConfig, device: Any)
     return input_ids.to(device)
 
 
-def _single_boundary_token(tokenizer: Any, prompt: str, candidate: str, config: RunConfig) -> int | None:
+def _single_boundary_token(
+    tokenizer: Any, prompt: str, candidate: str, config: RunConfig
+) -> int | None:
     rendered = tokenizer.apply_chat_template(
         [{"role": "user", "content": prompt}],
         tokenize=False,
@@ -340,14 +366,24 @@ def _single_boundary_token(tokenizer: Any, prompt: str, candidate: str, config: 
     return None
 
 
-def refusal_token_pair(tokenizer: Any, prompt: str, config: RunConfig) -> tuple[tuple[str, int], tuple[str, int]] | None:
+def refusal_token_pair(
+    tokenizer: Any, prompt: str, config: RunConfig
+) -> tuple[tuple[str, int], tuple[str, int]] | None:
     """Return the first single-token refusal/compliance candidates at a chat boundary."""
     refusal = next(
-        ((text, token) for text in (" I", " Sorry") if (token := _single_boundary_token(tokenizer, prompt, text, config)) is not None),
+        (
+            (text, token)
+            for text in (" I", " Sorry")
+            if (token := _single_boundary_token(tokenizer, prompt, text, config)) is not None
+        ),
         None,
     )
     compliance = next(
-        ((text, token) for text in (" Sure", " Yes") if (token := _single_boundary_token(tokenizer, prompt, text, config)) is not None),
+        (
+            (text, token)
+            for text in (" Sure", " Yes")
+            if (token := _single_boundary_token(tokenizer, prompt, text, config)) is not None
+        ),
         None,
     )
     if refusal is None or compliance is None or refusal[1] == compliance[1]:
@@ -365,7 +401,13 @@ def _refusal_likelihood(logits: Any, token_pair: tuple[tuple[str, int], tuple[st
     return log_probs[:, refusal_id] - log_probs[:, compliance_id]
 
 
-def _mean_proxy(model: Any, tokenizer: Any, prompts: Sequence[str], config: RunConfig, token_pair: tuple[tuple[str, int], tuple[str, int]]) -> float:
+def _mean_proxy(
+    model: Any,
+    tokenizer: Any,
+    prompts: Sequence[str],
+    config: RunConfig,
+    token_pair: tuple[tuple[str, int], tuple[str, int]],
+) -> float:
     import torch
 
     device = next(model.parameters()).device
@@ -450,15 +492,19 @@ def _build_bridge(
     del circuitkit
     device = bridge_device if bridge_device is not None else next(model.parameters()).device
     dtype = bridge_dtype if bridge_dtype is not None else next(model.parameters()).dtype
+    # Offline-first: the bridge resolves architecture from this identifier, and a
+    # gated hub ID fails without credentials (observed 401). The staged local
+    # directory carries the identical pinned files.
+    local_source = Path("models/tiny-aya-global")
+    bridge_source: str = str(local_source) if local_source.is_dir() else config.model_id
     bridge = TransformerBridge.boot_transformers(
-        config.model_id,
+        bridge_source,
         hf_model=model,
         tokenizer=tokenizer,
         device=device,
         dtype=dtype,
         trust_remote_code=config.trust_remote_code,
     )
-    # Adds legacy names such as resid_pre but explicitly disables folding/centering.
     bridge.enable_compatibility_mode(no_processing=True)
     return bridge
 
@@ -466,7 +512,9 @@ def _build_bridge(
 def _patch_index(last_position: int) -> Any:
     import pandas as pd
 
-    return pd.DataFrame({"layer": list(_BOUNDARY_LAYERS), "pos": [last_position] * len(_BOUNDARY_LAYERS)})
+    return pd.DataFrame(
+        {"layer": list(_BOUNDARY_LAYERS), "pos": [last_position] * len(_BOUNDARY_LAYERS)}
+    )
 
 
 def _new_d2_accounting(mode: str) -> dict[str, Any]:
@@ -487,7 +535,11 @@ def _d2_accounting(attempts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 def _diagnostic_totals(calls: Mapping[str, Mapping[str, Any]]) -> dict[str, int]:
     return {
         metric: sum(int(calls[name][metric]) for name in ("D1", "D2", "D3"))
-        for metric in ("actual_forward_calls", "actual_backward_calls", "prompt_equivalent_forwards")
+        for metric in (
+            "actual_forward_calls",
+            "actual_backward_calls",
+            "prompt_equivalent_forwards",
+        )
     }
 
 
@@ -529,16 +581,24 @@ def _d2_attempt(
             base_model, tokenizer, config, bridge_device=bridge_device, bridge_dtype=bridge_dtype
         )
         if getattr(base_bridge.cfg, "n_layers", 0) <= _BOUNDARY_LAYERS[-1]:
-            raise RuntimeError("Tiny Aya compatibility bridge does not expose all six required residual boundaries")
+            raise RuntimeError(
+                "Tiny Aya compatibility bridge does not expose all six required residual boundaries"
+            )
         if not serial_bridges:
             drifted_bridge = _build_bridge(
-                drifted_model, tokenizer, config, bridge_device=bridge_device, bridge_dtype=bridge_dtype
+                drifted_model,
+                tokenizer,
+                config,
+                bridge_device=bridge_device,
+                bridge_dtype=bridge_dtype,
             )
 
         prompt_results: list[dict[str, Any]] = []
         prepared: list[tuple[DataItem, Any, int, Any, float]] = []
 
-        def patch_from_clean(item: DataItem, tokens: Any, last_position: int, clean_cache: Any, base_kl: float) -> None:
+        def patch_from_clean(
+            item: DataItem, tokens: Any, last_position: int, clean_cache: Any, base_kl: float
+        ) -> None:
             with torch.inference_mode():
                 accounting["hf_drifted_parity_forwards"] += 1
                 drifted_hf_logits = drifted_model(
@@ -569,12 +629,16 @@ def _d2_attempt(
                     "last_position": last_position,
                     "base_hf_transformerlens_kl": base_kl,
                     "drifted_hf_transformerlens_kl": drifted_kl,
-                    "recoveries": {str(layer): value for layer, value in zip(_BOUNDARY_LAYERS, recoveries)},
+                    "recoveries": {
+                        str(layer): value for layer, value in zip(_BOUNDARY_LAYERS, recoveries)
+                    },
                 }
             )
 
         for item in items:
-            tokens = _chat_input_ids(tokenizer, item.prompt, config, next(base_bridge.parameters()).device)
+            tokens = _chat_input_ids(
+                tokenizer, item.prompt, config, next(base_bridge.parameters()).device
+            )
             last_position = int(tokens.shape[-1] - 1)
             with torch.inference_mode():
                 accounting["hf_base_parity_forwards"] += 1
@@ -585,10 +649,14 @@ def _d2_attempt(
                 base_tl_logits, clean_cache = base_bridge.run_with_cache(
                     tokens, names_filter=lambda name: name in boundary_names
                 )
-            base_kl = _validate_d2_parity("base", item.sample_id, base_hf_logits, base_tl_logits, accounting)
+            base_kl = _validate_d2_parity(
+                "base", item.sample_id, base_hf_logits, base_tl_logits, accounting
+            )
             missing = sorted(boundary_names.difference(set(clean_cache.keys())))
             if missing:
-                raise RuntimeError(f"full-position resid_pre cache missing required boundaries: {missing}")
+                raise RuntimeError(
+                    f"full-position resid_pre cache missing required boundaries: {missing}"
+                )
             if serial_bridges:
                 prepared.append((item, tokens, last_position, clean_cache, base_kl))
             else:
@@ -598,7 +666,11 @@ def _d2_attempt(
             del base_bridge
             base_bridge = None
             drifted_bridge = _build_bridge(
-                drifted_model, tokenizer, config, bridge_device=bridge_device, bridge_dtype=bridge_dtype
+                drifted_model,
+                tokenizer,
+                config,
+                bridge_device=bridge_device,
+                bridge_dtype=bridge_dtype,
             )
             for item, tokens, last_position, clean_cache, base_kl in prepared:
                 patch_from_clean(item, tokens, last_position, clean_cache, base_kl)
@@ -607,7 +679,11 @@ def _d2_attempt(
             del drifted_bridge
             drifted_bridge = None
             returned_bridge = _build_bridge(
-                base_model, tokenizer, config, bridge_device=bridge_device, bridge_dtype=bridge_dtype
+                base_model,
+                tokenizer,
+                config,
+                bridge_device=bridge_device,
+                bridge_dtype=bridge_dtype,
             )
         else:
             returned_bridge = base_bridge
@@ -633,13 +709,16 @@ def _d2_result(
 ) -> dict[str, Any]:
     """Summarize signed category recoveries without changing their direction."""
     band_recovery = {
-        layer: sum(float(row["recoveries"][str(layer)]) for row in prompt_results) / len(prompt_results)
+        layer: sum(float(row["recoveries"][str(layer)]) for row in prompt_results)
+        / len(prompt_results)
         for layer in _BOUNDARY_LAYERS
     }
     category_band_recovery = {
         category: {
             str(layer): sum(
-                float(row["recoveries"][str(layer)]) for row in prompt_results if row["category"] == category
+                float(row["recoveries"][str(layer)])
+                for row in prompt_results
+                if row["category"] == category
             )
             / sum(1 for row in prompt_results if row["category"] == category)
             for layer in _BOUNDARY_LAYERS
@@ -662,7 +741,9 @@ def _d2_result(
         "band_recovery": {str(layer): value for layer, value in band_recovery.items()},
         "category_band_recovery": category_band_recovery,
         "sharpness": max(positives) / sum(positives) if positives else None,
-        "warning": None if positives else "D2 sharpness undefined: all band recoveries were nonpositive",
+        "warning": None
+        if positives
+        else "D2 sharpness undefined: all band recoveries were nonpositive",
         "parity_retry": dict(retry) if retry is not None else {"performed": False},
         "forward_accounting": _d2_accounting(attempts),
     }
@@ -682,7 +763,9 @@ def _d2_patching(
     items = [*safety, *benign]
     token_pair = refusal_token_pair(tokenizer, safety[0].prompt, config)
     if token_pair is None:
-        raise RuntimeError("no tokenizer-valid single-token refusal/compliance pair at the chat boundary")
+        raise RuntimeError(
+            "no tokenizer-valid single-token refusal/compliance pair at the chat boundary"
+        )
     for item in items:
         if refusal_token_pair(tokenizer, item.prompt, config) != token_pair:
             raise RuntimeError(
@@ -692,7 +775,14 @@ def _d2_patching(
     attempts: list[dict[str, Any]] = []
     try:
         prompt_results, bridge, initial_accounting = _d2_attempt(
-            base_model, drifted_model, tokenizer, items, token_pair, config, mode="initial", serial_bridges=False
+            base_model,
+            drifted_model,
+            tokenizer,
+            items,
+            token_pair,
+            config,
+            mode="initial",
+            serial_bridges=False,
         )
         attempts.append(initial_accounting)
         return _d2_result(token_pair, prompt_results, attempts, retry=None), bridge
@@ -700,7 +790,9 @@ def _d2_patching(
         initial_failure = parity_failure
         attempts.append(initial_failure.accounting)
 
-    if any(next(model.parameters()).dtype != torch.bfloat16 for model in (base_model, drifted_model)):
+    if any(
+        next(model.parameters()).dtype != torch.bfloat16 for model in (base_model, drifted_model)
+    ):
         raise _D2ParityFailure(
             initial_failure.checkpoint,
             initial_failure.sample_id,
@@ -813,7 +905,12 @@ def _d3_discovery(
     )
     if any(record.clean_prompt == record.corrupt_prompt for record in dataset.records):
         raise RuntimeError("CircuitKIT produced an identical clean/corrupt prompt pair")
-    task = NormalizedTaskSpec(dataset, name=task_name, cache_dir=str(run_dir / "diagnostics" / "normalized"), templated=True)
+    task = NormalizedTaskSpec(
+        dataset,
+        name=task_name,
+        cache_dir=str(run_dir / "diagnostics" / "normalized"),
+        templated=True,
+    )
     if task_name.lower() not in ck.list_tasks():
         ck.register_task(task)
 
@@ -835,7 +932,9 @@ def _d3_discovery(
     masses = _head_layer_masses(signed_scores)
     total_mass = sum(masses.values())
     if total_mass <= 0.0 or not math.isfinite(total_mass):
-        raise RuntimeError("CircuitKIT returned invalid or zero absolute attention-head attribution mass")
+        raise RuntimeError(
+            "CircuitKIT returned invalid or zero absolute attention-head attribution mass"
+        )
     selected = _rank_layers(masses)
     if len(selected) != 4:
         raise RuntimeError("CircuitKIT did not supply attention-head mass for four layers")
@@ -843,7 +942,9 @@ def _d3_discovery(
     random_controls: dict[str, dict[str, Any]] = {}
     selected_mask = _matrix_mask(eligible_qv_names, selected)
     if not selected_mask:
-        raise RuntimeError("CircuitKIT-selected layers have no changed whole q/v matrices; M2 is unavailable")
+        raise RuntimeError(
+            "CircuitKIT-selected layers have no changed whole q/v matrices; M2 is unavailable"
+        )
     for seed in (101, 102, 103):
         random_scores = random_selector(bridge, task_name, {"seed": seed})
         random_masses = _head_layer_masses(random_scores)
@@ -888,7 +989,10 @@ def run_diagnostics(
     started = time.monotonic()
     digest = config_hash(config.model_dump(mode="json"))
     libraries = _libraries()
-    inputs = [f"base:{config.model_id}@{config.model_revision}", f"development_items:{len(devitems)}"]
+    inputs = [
+        f"base:{config.model_id}@{config.model_revision}",
+        f"development_items:{len(devitems)}",
+    ]
     warnings: list[str] = []
     errors: list[str] = []
     report: dict[str, Any] = {
@@ -937,7 +1041,9 @@ def run_diagnostics(
         d1 = compute_qv_drift(base_model.state_dict(), drifted_model.state_dict())
         report["D1"] = d1.as_dict()
         if d1.zero_whole_model_drift:
-            warnings.append("D1 found zero q/v whole-model drift; checkpoint is a non-fault and concentration is undefined")
+            warnings.append(
+                "D1 found zero q/v whole-model drift; checkpoint is a non-fault and concentration is undefined"
+            )
             d2: dict[str, Any] | None = None
             d3: dict[str, Any] | None = None
         else:
@@ -947,16 +1053,32 @@ def run_diagnostics(
 
             tokenizer = getattr(base_model, "tokenizer", None)
             if tokenizer is None:
+                # WHY CUSTOM (local-only): modeling._source resolves the same pinned
+                # local directory for weights; diagnostics must never re-fetch a
+                # gated repo from the hub (observed 401) when the bytes are staged.
+                local_source = Path("models/tiny-aya-global")
+                if not local_source.is_dir():
+                    raise RuntimeError(
+                        "offline diagnostics require staged local model files at models/tiny-aya-global"
+                    )
                 tokenizer = AutoTokenizer.from_pretrained(
-                    config.model_id,
-                    revision=config.model_revision,
+                    str(local_source),
                     trust_remote_code=config.trust_remote_code,
+                    local_files_only=True,
                 )
             token_pair = refusal_token_pair(tokenizer, safety[0].prompt, config)
             if token_pair is None:
-                raise RuntimeError("no tokenizer-valid single-token refusal/compliance pair at the chat boundary")
+                raise RuntimeError(
+                    "no tokenizer-valid single-token refusal/compliance pair at the chat boundary"
+                )
             rank_result = _minimum_rank_with_safetune(
-                base_model, drifted_model, tokenizer, [item.prompt for item in safety], token_pair, config, fault.rank
+                base_model,
+                drifted_model,
+                tokenizer,
+                [item.prompt for item in safety],
+                token_pair,
+                config,
+                fault.rank,
             )
             report["D1"]["minimum_restoring_rank"] = rank_result.as_dict()
             d1_forwards = 8 * (1 + rank_result.evaluator_calls)
