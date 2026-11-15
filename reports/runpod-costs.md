@@ -16,3 +16,7 @@ The protected $3 reserve is untouched. A single projected job above $1.50, cross
 The ledger uses Decimal arithmetic, locked check-and-append reservations, actual-billing reconciliation and explicit release. Hard-cap preflights reject underquoted compute, stale ledger exposure, mismatched projected totals, and estimates beyond the hard runtime. A failed or ambiguous provider request retains its reservation until reconciled or explicitly released. Historical entries and observed billing are never erased.
 
 Watchdog CLI delete signatures were verified with help only. The attempt-1 resources were deleted after the NFS failure. Watchdog and evaluator boundary proofs must pass before billable execution; unit tests are not proof of provider cleanup.
+
+## Watchdog verification (2026-11-15)
+
+The transient user-systemd timer mechanism was proven with a canary before provisioning job 07: a canary timer appended its marker file and `require_canary` observed it. Every subsequent provisioning armed a pod-first timer and verified it with `verify_timer_armed`, which now parses `list-timers` (transient timers expose no `NextElapseUSec`, and the listing renders local time, not UTC). Job 04 demonstrated the failure mode this guards: its 60-minute timer produced no journal entries and the pod survived ~20 minutes past the cap, so the orchestrator terminated it manually. Later jobs use the verified flow. No timer is trusted without the list-timers schedule proof.
