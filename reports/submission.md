@@ -72,7 +72,7 @@ Finish M2/R controls with rerun D3, the leave-one-out router comparison, and one
 ## Artifacts
 
 - HF datasets collection `NeuroForge: Datasets, Audits and Agent Traces`: https://huggingface.co/collections/Skrisps26/neuroforge-datasets-audits-and-agent-traces (train/dev/validation + provenance + drift score records; sealed excluded).
-- HF models collection `NeuroForge: Models and Patches`: https://huggingface.co/collections/Skrisps26/neuroforge-models-and-patches-6af98afd5a140f4184fb80b9 — drift adapters: https://huggingface.co/Skrisps26/neuroforge-drift-adapters (f1-03, f2-02, f2-03 LoRA + manifests; repair patch uploads pending the sprint).
+- HF models collection `NeuroForge: Models and Patches`: https://huggingface.co/collections/Skrisps26/neuroforge-models-and-patches — drift adapters: https://huggingface.co/Skrisps26/neuroforge-drift-adapters (f1-03, f2-02, f2-03 LoRA + manifests; completed f1-01 B0/M1 repair records incl. rank-8 patch + ACCEPT gate decision; f2-02 repair sprint running, lands in the same repo).
 - GitHub repo with README reproducibility notes and `scripts/run_study.py --phase baseline|population|diagnostics|candidates|route|sealed` commands.
 - No demo/Space; no video (finalist stage only).
 
