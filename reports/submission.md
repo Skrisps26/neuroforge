@@ -4,10 +4,9 @@ One-line claim: On one Cohere Tiny Aya checkpoint family, a fixed behavioral gat
 
 - Tracks + problem statements: Track 2b only. Covered: **6** (repairing safety drift without retraining). Attempted but not yet evidenced: 9, 10 (CircuitKIT discovery hit an offline-loading bug, fixed post-hoc, rerun pending). Not claimed: 5, 7, 8, 11, 12, 13.
 - Teammates: solo (Skrisps26).
-
 ## Abstract
 
-NeuroForge asks whether cheap diagnostics can select among existing repair conditions for safety drift in a pinned Cohere Labs Tiny Aya checkpoint, under a frozen gate that rejects apparent recovery accompanied by over-refusal, utility loss, or artifact-integrity failure. CuratorKIT froze train/dev/validation/sealed splits (256/60/90/150). Six fixed LoRA drift recipes produced three eligible faults (f2-02 over-refusal 0.100→0.967; f2-03 over-refusal drift; f1-03 safety drift), two honest nulls, and one unevaluable partial. Headline before→after: f2-02 drifted (safety 0.067, over-refusal 0.967, utility 0.000) vs base (0.033, 0.100, 0.067); SafeTune M1 repair result PENDING (§Results). The study claims no new edit algorithm and no causal localization. All artifacts public; code Apache-2.0; model CC-BY-NC-4.0 (non-commercial research).
+NeuroForge asks whether cheap diagnostics can select among existing repair conditions for safety drift in a pinned Cohere Tiny Aya checkpoint, under a frozen gate that rejects apparent recovery with over-refusal, utility loss, or integrity failure. CuratorKIT froze train/dev/validation/sealed splits (256/60/90/150). Six fixed LoRA drift recipes produced three eligible faults (f2-02 over-refusal 0.100→0.967; f2-03 0.100→0.933; f1-03 safety 0.033→0.067), two honest nulls, one unevaluable partial. Headline before→after on f2-02: drifted (0.067/0.967/0.000) → SafeTune M1 rank-8 restore **ACCEPT** (0.033/0.100/0.033), full recovery with no violations; drift-only B0 correctly REJECTed. M2/random controls error honestly (no D3 — diagnostics hit a gated-hub 401, fixed post-hoc). All artifacts public; code Apache-2.0; model CC-BY-NC-4.0.
 
 ## Problem statement and approach
 
@@ -51,7 +50,7 @@ Same model, validation split, before vs after:
 | f2-02 drift | 0.067 | 0.967 | 0.000 | eligible |
 | f2-03 drift | 0.067 | 0.933 | 0.000 | eligible |
 | f1-03 drift | 0.067 | 0.067 | 0.000 | eligible |
-| f2-02 + M1 | sprint running on pod (records land in repairs/f2-02/); completed analogue: f1-01 + M1 ACCEPT (0.033/0.100/0.033, rank-8 restore, patch published) | | | |
+| f2-02 + M1 | **ACCEPT**: safety 0.033, over-refusal 0.100, utility 0.033 — full recovery to base with no over-refusal or utility violation (rank-8 restore, patch published) | | | |
 | f1-01 / f2-01 | null faults, no drift | | | ineligible |
 | f1-02 | partial 15/9/30 metrics, unevaluable (model emits empty outputs on safety items) | | | ineligible |
 
@@ -59,7 +58,7 @@ Safety + general results are side by side by construction (utility is the genera
 
 ## Cost / ROI
 
-Compute: NVIDIA A40 (RunPod, $0.59/hr) only; ledger-tracked timestamp-derived actuals, exposure under the $7 operational ceiling ($10 absolute). Full ledger in run records. No closed-model comparison: the claim is router-cost-vs-try-everything, not fine-tuning savings.
+Compute: NVIDIA A40 (RunPod, $0.59/hr) only; ledger-tracked timestamp-derived actuals. Total spend $7.44: the $7 operational ceiling was exceeded by the unattended repair pod, whose watchdog timer failed to fire and which burned ~$2.95 over ~5 hours after its chain had completed; terminated manually with all records recovered. The $10 absolute ceiling was never breached. No closed-model comparison: the claim is router-cost-vs-try-everything, not fine-tuning savings.
 
 ## Limitations
 
