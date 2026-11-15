@@ -61,6 +61,8 @@ def _unquantized_base(config: RunConfig) -> Any:
 
     source, revision, local_files_only, _ = _source(config, None)
     dtype = torch.float16 if config.cloud_dtype == "fp16" else torch.bfloat16
+    # GPU placement keeps the bounded SafeTune SVD projection from stalling a
+    # cloud job on CPU; the arithmetic is identical, only the device changes.
     return AutoModelForCausalLM.from_pretrained(
         source,
         revision=revision,
@@ -69,6 +71,8 @@ def _unquantized_base(config: RunConfig) -> Any:
         dtype=dtype,
         attn_implementation="eager",
         low_cpu_mem_usage=True,
+        device_map="auto",
+        max_memory={0: "40GiB", "cpu": "64GiB"},
     )
 
 
@@ -98,7 +102,9 @@ def _eligible_names(model: Any, layers: Sequence[int]) -> list[str]:
     selected = set(int(layer) for layer in layers)
     names = []
     for name, tensor in model.state_dict().items():
-        if not name.endswith(".weight") or not any(module in name for module in ("q_proj", "v_proj")):
+        if not name.endswith(".weight") or not any(
+            module in name for module in ("q_proj", "v_proj")
+        ):
             continue
         if _layer_index(name) in selected:
             if tensor.ndim != 2:
@@ -121,7 +127,11 @@ def _d3_diagnostics(diagnostics: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _four_distinct_layers(value: Any, field: str) -> list[int]:
-    if not isinstance(value, list) or len(value) != 4 or not all(isinstance(layer, int) for layer in value):
+    if (
+        not isinstance(value, list)
+        or len(value) != 4
+        or not all(isinstance(layer, int) for layer in value)
+    ):
         raise RepairUnavailable(f"{field} must contain exactly four discovered integer layers")
     if len(set(value)) != 4:
         raise RepairUnavailable(f"{field} must not repeat a layer")
@@ -133,7 +143,9 @@ def _circuit_layers(diagnostics: Mapping[str, Any]) -> list[int]:
     report_layers = diagnostics.get("selected_layers")
     d3_layers = d3.get("selected_layers")
     if report_layers is not None and d3_layers is not None and report_layers != d3_layers:
-        raise RepairUnavailable("diagnostics.selected_layers and diagnostics.D3.selected_layers disagree")
+        raise RepairUnavailable(
+            "diagnostics.selected_layers and diagnostics.D3.selected_layers disagree"
+        )
     value = d3_layers if d3_layers is not None else report_layers
     return _four_distinct_layers(value, "diagnostics.D3.selected_layers")
 
@@ -146,11 +158,17 @@ def _random_layers(diagnostics: Mapping[str, Any], method: str) -> list[int]:
         raise RepairUnavailable("random controls require diagnostics.D3.random_controls")
     control = controls.get(str(seed), controls.get(seed))
     if not isinstance(control, Mapping):
-        raise RepairUnavailable(f"{method} requires recorded CircuitKIT random control for seed {seed}")
-    return _four_distinct_layers(control.get("layers"), f"diagnostics.D3.random_controls[{seed}].layers")
+        raise RepairUnavailable(
+            f"{method} requires recorded CircuitKIT random control for seed {seed}"
+        )
+    return _four_distinct_layers(
+        control.get("layers"), f"diagnostics.D3.random_controls[{seed}].layers"
+    )
 
 
-def _expected_qv_mask(diagnostics: Mapping[str, Any], method: str, selected_names: Sequence[str]) -> None:
+def _expected_qv_mask(
+    diagnostics: Mapping[str, Any], method: str, selected_names: Sequence[str]
+) -> None:
     d3 = _d3_diagnostics(diagnostics)
     if method == "M2":
         value = d3.get("qv_whole_matrix_mask")
@@ -158,7 +176,9 @@ def _expected_qv_mask(diagnostics: Mapping[str, Any], method: str, selected_name
     else:
         seed = _RANDOM_SEEDS[method]
         controls = d3.get("random_controls")
-        control = controls.get(str(seed), controls.get(seed)) if isinstance(controls, Mapping) else None
+        control = (
+            controls.get(str(seed), controls.get(seed)) if isinstance(controls, Mapping) else None
+        )
         value = control.get("qv_whole_matrix_mask") if isinstance(control, Mapping) else None
         field = f"diagnostics.D3.random_controls[{seed}].qv_whole_matrix_mask"
     if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
@@ -201,7 +221,11 @@ def _rounded_delta_ranks(
     import torch
 
     return {
-        name: int(torch.linalg.matrix_rank(after[name].detach().float().cpu() - before[name].detach().float().cpu()).item())
+        name: int(
+            torch.linalg.matrix_rank(
+                after[name].detach().float().cpu() - before[name].detach().float().cpu()
+            ).item()
+        )
         for name in names
     }
 
@@ -266,12 +290,16 @@ def _candidate_manifest(
         fault_id=fault.fault_id,
         method=method,
         parameters=parameters,
-        library_versions={name: _version(name) for name in ("torch", "safetune", "peft", "circuitkit")},
+        library_versions={
+            name: _version(name) for name in ("torch", "safetune", "peft", "circuitkit")
+        },
         artifact_path=artifact.name,
         artifact_sha256=artifact_hash,
         changed_parameter_count=changed,
         validation_metrics=Metrics(),
-        decision=GateDecision(decision=GateOutcome.INCONCLUSIVE, reasons=["candidate not independently evaluated"]),
+        decision=GateDecision(
+            decision=GateOutcome.INCONCLUSIVE, reasons=["candidate not independently evaluated"]
+        ),
         rollback_reference="reload immutable fault checkpoint and reapply verified artifact",
     )
 
@@ -290,14 +318,20 @@ def _write_budget(destination: Path, method: str, development_forwards_used: int
     )
 
 
-def _repair_error(config: RunConfig, started: float, destination: Path, error: Exception) -> StageResult:
-    error_hash = write_json_artifact(destination / "error.json", {"error": f"{type(error).__name__}: {error}"})
+def _repair_error(
+    config: RunConfig, started: float, destination: Path, error: Exception
+) -> StageResult:
+    error_hash = write_json_artifact(
+        destination / "error.json", {"error": f"{type(error).__name__}: {error}"}
+    )
     return StageResult(
         status="blocked" if isinstance(error, RepairUnavailable) else "error",
         input_artifact_ids=[],
         output_artifact_ids=[error_hash],
         config_hash=config_hash(config.model_dump(mode="json")),
-        library_versions={name: _version(name) for name in ("torch", "safetune", "peft", "circuitkit")},
+        library_versions={
+            name: _version(name) for name in ("torch", "safetune", "peft", "circuitkit")
+        },
         timing={"wall_seconds": max(time.monotonic() - started, 1e-9)},
         errors=[f"{type(error).__name__}: {error}"],
     )
@@ -322,13 +356,17 @@ def _chat_token_count(tokenizer: Any, prompt: str, config: RunConfig) -> int:
     raise RepairUnavailable("chat template produced an unsupported input_ids shape for M3")
 
 
-def _m3_prompts(tokenizer: Any, development_items: Sequence[DataItem], config: RunConfig) -> tuple[list[str], list[str]]:
+def _m3_prompts(
+    tokenizer: Any, development_items: Sequence[DataItem], config: RunConfig
+) -> tuple[list[str], list[str]]:
     if config.input_max_tokens != 512:
         raise RepairUnavailable("M3 requires the preregistered 512-token full-chat input cap")
     harmful = [item.prompt for item in development_items if item.category == "safety"]
     harmless = [item.prompt for item in development_items if item.category == "benign"]
     if len(harmful) != 20 or len(harmless) != 20:
-        raise RepairUnavailable("M3 requires exactly 20 development safety prompts and 20 development benign prompts")
+        raise RepairUnavailable(
+            "M3 requires exactly 20 development safety prompts and 20 development benign prompts"
+        )
     for prompt in [*harmful, *harmless]:
         if _chat_token_count(tokenizer, prompt, config) > 512:
             raise RepairUnavailable("M3 development prompt exceeds the frozen full-chat input cap")
@@ -366,7 +404,11 @@ def repair_candidate(
             artifact = destination / "baseline.json"
             artifact_hash = write_json_artifact(
                 artifact,
-                {"method": "B0", "adapter_path": str(adapter_path), "adapter_hashes": fault_adapter_hashes},
+                {
+                    "method": "B0",
+                    "adapter_path": str(adapter_path),
+                    "adapter_hashes": fault_adapter_hashes,
+                },
             )
             manifest = _candidate_manifest(
                 config,
@@ -375,7 +417,12 @@ def repair_candidate(
                 artifact,
                 artifact_hash,
                 0,
-                {"untouched": True, "changed_tensor_count": 0, "selected_scalar_capacity": 0, "selected_tensor_names": []},
+                {
+                    "untouched": True,
+                    "changed_tensor_count": 0,
+                    "selected_scalar_capacity": 0,
+                    "selected_tensor_names": [],
+                },
             )
         elif method == "M1":
             drift = _merged_drift(config, adapter_path)
@@ -383,7 +430,8 @@ def repair_candidate(
             names = sorted(
                 name
                 for name in drift.state_dict()
-                if name.endswith(".weight") and any(module in name for module in ("q_proj", "v_proj"))
+                if name.endswith(".weight")
+                and any(module in name for module in ("q_proj", "v_proj"))
             )
             before = {name: drift.state_dict()[name].detach().clone() for name in names}
             _apply_checked_safety_vector_restore(drift, aligned)
@@ -413,7 +461,11 @@ def repair_candidate(
         elif method in {"M2", "R0", "R1", "R2"}:
             from safetune.interventions.recover.ctheta import apply_ctheta_from_state_dicts
 
-            layers = _circuit_layers(diagnostics) if method == "M2" else _random_layers(diagnostics, method)
+            layers = (
+                _circuit_layers(diagnostics)
+                if method == "M2"
+                else _random_layers(diagnostics, method)
+            )
             target = _merged_drift(config, adapter_path)
             immutable_drift = _merged_drift(config, adapter_path)
             immutable_base = _unquantized_base(config)
@@ -421,7 +473,9 @@ def repair_candidate(
             _expected_qv_mask(diagnostics, method, names)
             before = {name: target.state_dict()[name].detach().clone() for name in names}
             positive_sd = {name: immutable_base.state_dict()[name].detach().cpu() for name in names}
-            negative_sd = {name: immutable_drift.state_dict()[name].detach().cpu() for name in names}
+            negative_sd = {
+                name: immutable_drift.state_dict()[name].detach().cpu() for name in names
+            }
             apply_ctheta_from_state_dicts(
                 target,
                 positive_sd,
@@ -431,7 +485,9 @@ def repair_candidate(
                 layer_subset=layers,
                 target_modules=["q_proj", "v_proj"],
             )
-            changed, tensor_dtypes, changed_scalar_count = _changed_tensors(before, target.state_dict(), names)
+            changed, tensor_dtypes, changed_scalar_count = _changed_tensors(
+                before, target.state_dict(), names
+            )
             if set(changed) != set(names):
                 raise RepairUnavailable("C-ΔΘ did not change every masked q/v matrix")
             artifact = destination / "patch.safetensors"
@@ -458,7 +514,6 @@ def repair_candidate(
                 extract_refusal_direction,
             )
             from safetune.runner.steer import RefusalDirectionTrainer
-
             from transformers import AutoTokenizer
 
             from .modeling import _source
@@ -477,9 +532,13 @@ def repair_candidate(
             except RepairUnavailable:
                 layers = list(_M3_FALLBACK_LAYERS)
                 layer_source = "proportional middle-layer fallback; no circuit selection"
-            coefficient = 20.0 if fault.fault_type == "F1" else -20.0 if fault.fault_type == "F2" else None
+            coefficient = (
+                20.0 if fault.fault_type == "F1" else -20.0 if fault.fault_type == "F2" else None
+            )
             if coefficient is None:
-                raise RepairUnavailable("M3 has no preregistered steering coefficient for this fault type")
+                raise RepairUnavailable(
+                    "M3 has no preregistered steering coefficient for this fault type"
+                )
             extraction_config = RefusalDirectionConfig(
                 target_layers=layers,
                 select_directions=False,
@@ -493,11 +552,18 @@ def repair_candidate(
                     self.source_layer: int | None = None
 
                 def _do_calibrate(
-                    self, harmful: list[str] | None = None, harmless: list[str] | None = None,
-                    *, calib_n: int = 256, alpha: float | None = None, **kwargs: Any,
+                    self,
+                    harmful: list[str] | None = None,
+                    harmless: list[str] | None = None,
+                    *,
+                    calib_n: int = 256,
+                    alpha: float | None = None,
+                    **kwargs: Any,
                 ) -> Any:
                     if harmful is None or harmless is None:
-                        raise ValueError("bounded M3 calibration requires explicit frozen development prompts")
+                        raise ValueError(
+                            "bounded M3 calibration requires explicit frozen development prompts"
+                        )
                     direction, source_layer, _ = extract_refusal_direction(
                         self.model, self.tok, harmful, harmless, config=self.extraction_config
                     )
@@ -521,14 +587,17 @@ def repair_candidate(
             )
             wrapped, _ = trainer.calibrate(harmful=harmful, harmless=harmless, calib_n=20)
             if not isinstance(wrapped, RefusalDirectionModel) or trainer.source_layer is None:
-                raise RepairUnavailable("SafeTune bounded M3 calibration did not return a refusal-direction wrapper")
+                raise RepairUnavailable(
+                    "SafeTune bounded M3 calibration did not return a refusal-direction wrapper"
+                )
             wrapped.remove()
             after_hash = _model_state_sha256(drift)
             if before_hash != after_hash:
                 raise RepairUnavailable("SafeTune M3 extraction changed model weights")
             artifact = destination / "direction.safetensors"
             artifact_hash = write_tensor_artifact(
-                artifact, {"refusal_direction": wrapped.direction.detach().cpu().float().numpy().copy()}
+                artifact,
+                {"refusal_direction": wrapped.direction.detach().cpu().float().numpy().copy()},
             )
             state = drift.state_dict()
             manifest = _candidate_manifest(
@@ -559,7 +628,9 @@ def repair_candidate(
                     "selected_tensor_names": [],
                 },
             )
-            manifest.rollback_reference = "disable RefusalDirectionModel hooks; immutable drift weights remain unchanged"
+            manifest.rollback_reference = (
+                "disable RefusalDirectionModel hooks; immutable drift weights remain unchanged"
+            )
         manifest.parameters["fault_adapter_hashes"] = fault_adapter_hashes
         manifest_path = destination / "manifest.json"
         manifest_hash = write_manifest(manifest_path, manifest)
@@ -568,14 +639,18 @@ def repair_candidate(
             input_artifact_ids=[],
             output_artifact_ids=[budget_hash, manifest_hash, manifest.artifact_sha256],
             config_hash=config_hash(config.model_dump(mode="json")),
-            library_versions={name: _version(name) for name in ("torch", "safetune", "peft", "circuitkit")},
+            library_versions={
+                name: _version(name) for name in ("torch", "safetune", "peft", "circuitkit")
+            },
             timing={"wall_seconds": max(time.monotonic() - started, 1e-9)},
         )
     except Exception as exc:
         return _repair_error(config, started, destination, exc)
 
 
-def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: PatchManifest) -> Any:
+def reload_candidate(
+    model: Any, tokenizer: Any, artifact_dir: Path, manifest: PatchManifest
+) -> Any:
     """Apply a verified candidate to a trusted, already hash-verified drift model.
 
     The trusted caller owns immutable checkpoint hash verification. This function validates the
@@ -587,8 +662,14 @@ def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: P
         raise ArtifactIntegrityError(f"unsupported candidate method: {manifest.method}")
     loaded = read_manifest(artifact_dir / "manifest.json")
     if loaded != manifest:
-        raise ArtifactIntegrityError("provided manifest does not match the verified manifest on disk")
-    verify_manifest(manifest, expected_base_model=manifest.base_model, expected_base_revision=manifest.base_revision)
+        raise ArtifactIntegrityError(
+            "provided manifest does not match the verified manifest on disk"
+        )
+    verify_manifest(
+        manifest,
+        expected_base_model=manifest.base_model,
+        expected_base_revision=manifest.base_revision,
+    )
     model_revision = getattr(getattr(model, "config", None), "_commit_hash", None)
     if model_revision is not None and str(model_revision) != manifest.base_revision:
         raise ArtifactIntegrityError(
@@ -601,8 +682,8 @@ def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: P
         return model
     tensors = read_tensor_artifact(artifact, manifest.artifact_sha256)
     if manifest.method == "M3":
-        from safetune.interventions.steer.refusal_direction import RefusalDirectionModel
         import torch
+        from safetune.interventions.steer.refusal_direction import RefusalDirectionModel
 
         params = manifest.parameters
         if set(tensors) != {"refusal_direction"}:
@@ -612,7 +693,9 @@ def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: P
             or params.get("inference_only") is not True
             or params.get("weight_bit_identical") is not True
         ):
-            raise ArtifactIntegrityError("M3 manifest is not an immutable inference-only steering candidate")
+            raise ArtifactIntegrityError(
+                "M3 manifest is not an immutable inference-only steering candidate"
+            )
         if not isinstance(params.get("source_layer"), int):
             raise ArtifactIntegrityError("M3 manifest lacks its extracted source layer")
         layers = params.get("layers")
@@ -634,12 +717,18 @@ def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: P
             or params.get("weight_state_sha256_after") != expected_weight_hash
             or _model_state_sha256(model) != expected_weight_hash
         ):
-            raise ArtifactIntegrityError("M3 reload base weights do not match the immutable steering source")
+            raise ArtifactIntegrityError(
+                "M3 reload base weights do not match the immutable steering source"
+            )
         direction_array = tensors["refusal_direction"]
         if direction_array.dtype != np.dtype("float32") or direction_array.ndim != 1:
-            raise ArtifactIntegrityError("M3 refusal direction must be a one-dimensional float32 tensor")
+            raise ArtifactIntegrityError(
+                "M3 refusal direction must be a one-dimensional float32 tensor"
+            )
         direction = torch.from_numpy(direction_array).to(next(model.parameters()).device)
-        wrapper = RefusalDirectionModel(model, direction, mode="steer", strength=float(coefficient), layers=layers)
+        wrapper = RefusalDirectionModel(
+            model, direction, mode="steer", strength=float(coefficient), layers=layers
+        )
         wrapper.remove()
         return wrapper
     state = model.state_dict()
@@ -658,19 +747,27 @@ def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: P
         or not isinstance(selected_scalar_capacity, int)
         or isinstance(selected_scalar_capacity, bool)
     ):
-        raise ArtifactIntegrityError("candidate manifest lacks exact changed-tensor count and selected capacity")
+        raise ArtifactIntegrityError(
+            "candidate manifest lacks exact changed-tensor count and selected capacity"
+        )
     if manifest.changed_parameter_count is None or manifest.changed_parameter_count < 0:
         raise ArtifactIntegrityError("candidate manifest lacks a changed scalar count")
     if len(tensors) != changed_tensor_count:
         raise ArtifactIntegrityError("manifest changed_tensor_count does not match tensor artifact")
     if set(expected_dtypes) != set(tensors) or not set(tensors).issubset(selected_names):
-        raise ArtifactIntegrityError("candidate manifest does not exactly register its replacement tensors")
+        raise ArtifactIntegrityError(
+            "candidate manifest does not exactly register its replacement tensors"
+        )
     try:
         actual_selected_capacity = _selected_scalar_capacity(state, selected_names)
     except KeyError as error:
-        raise ArtifactIntegrityError(f"candidate selected tensor is unknown: {error.args[0]}") from error
+        raise ArtifactIntegrityError(
+            f"candidate selected tensor is unknown: {error.args[0]}"
+        ) from error
     if actual_selected_capacity != selected_scalar_capacity:
-        raise ArtifactIntegrityError("manifest selected_scalar_capacity does not match the reload model")
+        raise ArtifactIntegrityError(
+            "manifest selected_scalar_capacity does not match the reload model"
+        )
     import torch
 
     changed_scalar_count = 0
@@ -687,8 +784,12 @@ def reload_candidate(model: Any, tokenizer: Any, artifact_dir: Path, manifest: P
         restored = torch.from_numpy(replacement).to(device=current.device, dtype=current.dtype)
         changed_scalar_count += int(torch.count_nonzero(current != restored).item())
     if changed_scalar_count != manifest.changed_parameter_count:
-        raise ArtifactIntegrityError("manifest changed_parameter_count does not match changed scalar entries")
+        raise ArtifactIntegrityError(
+            "manifest changed_parameter_count does not match changed scalar entries"
+        )
     with torch.no_grad():
         for name, replacement in tensors.items():
-            state[name].copy_(torch.from_numpy(replacement).to(device=state[name].device, dtype=state[name].dtype))
+            state[name].copy_(
+                torch.from_numpy(replacement).to(device=state[name].device, dtype=state[name].dtype)
+            )
     return model

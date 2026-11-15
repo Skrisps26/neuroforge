@@ -13,9 +13,11 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -40,7 +42,7 @@ class WatchdogResource(BaseModel):
         return value.astimezone(UTC)
 
     @model_validator(mode="after")
-    def validate_deadline(self) -> "WatchdogResource":
+    def validate_deadline(self) -> WatchdogResource:
         if self.deadline < self.created_at:
             raise ValueError("deadline precedes creation")
         if self.deadline - self.created_at > timedelta(hours=1):
@@ -56,7 +58,7 @@ class WatchdogAllowlist(BaseModel):
     resources: list[WatchdogResource] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def unique_resources(self) -> "WatchdogAllowlist":
+    def unique_resources(self) -> WatchdogAllowlist:
         ids = [resource.resource_id for resource in self.resources]
         if len(ids) != len(set(ids)):
             raise ValueError("allowlist contains duplicate resource IDs")
@@ -118,10 +120,7 @@ def _write_allowlist(path: Path, allowlist: WatchdogAllowlist) -> None:
     path = Path(path)
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text(
-        json.dumps(
-            allowlist.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-        )
-        + "\n",
+        json.dumps(allowlist.model_dump(mode="json"), sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
     temporary.replace(path)
@@ -162,9 +161,7 @@ def cleanup_at_deadline(
             failed.append(resource.resource_id)
     if deleted and not dry_run:
         remaining = [
-            resource
-            for resource in allowlist.resources
-            if resource.resource_id not in set(deleted)
+            resource for resource in allowlist.resources if resource.resource_id not in set(deleted)
         ]
         if remaining:
             _write_allowlist(path, WatchdogAllowlist(resources=remaining))
@@ -224,6 +221,83 @@ def arm_watchdog(
     if registered.returncode != 0:
         raise RuntimeError(f"watchdog timer was not registered: {registered.stderr.strip()}")
     return {"unit": timer_unit, "deadline": deadline.isoformat(), "allowlist_sha256": digest}
+
+
+CANARY_CONTENT = "neuroforge-watchdog-canary-ready"
+
+
+def arm_canary(marker_path: Path, *, unit_name: str, delay_seconds: int = 75) -> dict[str, str]:
+    """Arm a short canary timer proving the user-systemd mechanism actually fires.
+
+    The canary appends a fixed marker through the same systemd-run path the real
+    watchdog uses. Provisioning must call require_canary() before creating any
+    billable resource; a silent timer mechanism fails closed here, not at the
+    60-minute deadline.
+    """
+    if not unit_name or any(character.isspace() for character in unit_name):
+        raise ValueError("unit_name must be a non-empty systemd unit stem")
+    if not 5 <= delay_seconds <= 300:
+        raise ValueError("canary delay must be between 5 and 300 seconds")
+    marker = Path(marker_path).expanduser()
+    if marker.exists():
+        raise ValueError(f"canary marker already exists: {marker}")
+    timer_unit = f"{unit_name}.timer"
+    command = [
+        "systemd-run",
+        "--user",
+        f"--unit={unit_name}",
+        f"--on-active={delay_seconds}s",
+        "/bin/sh",
+        "-c",
+        f"echo {CANARY_CONTENT} >> {marker}",
+    ]
+    scheduled = subprocess.run(command, shell=False, check=False, text=True, capture_output=True)
+    if scheduled.returncode != 0:
+        raise RuntimeError(f"failed to arm canary timer: {scheduled.stderr.strip()}")
+    return {"unit": timer_unit, "marker": str(marker)}
+
+
+def require_canary(marker_path: Path, *, timeout_seconds: int = 150) -> None:
+    """Block until the canary marker carries the exact expected content."""
+    marker = Path(marker_path).expanduser()
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            if marker.read_text(encoding="utf-8").strip() == CANARY_CONTENT:
+                return
+        except OSError:
+            pass
+        time.sleep(5)
+    raise RuntimeError("watchdog canary timer did not fire; refusing to provision")
+
+
+def verify_timer_armed(timer_unit: str, *, deadline: datetime) -> dict[str, str]:
+    """Confirm the named timer is active and scheduled for the exact deadline minute."""
+    if not timer_unit.endswith(".timer"):
+        raise ValueError("timer_unit must name a .timer unit")
+    active = subprocess.run(
+        ["systemctl", "--user", "is-active", timer_unit],
+        shell=False,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if active.stdout.strip() != "active":
+        raise RuntimeError(f"watchdog timer is not active: {timer_unit}")
+    shown = subprocess.run(
+        ["systemctl", "--user", "show", timer_unit, "--property=NextElapseUSec"],
+        shell=False,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if shown.returncode != 0:
+        raise RuntimeError(f"could not read watchdog timer schedule: {timer_unit}")
+    if deadline.strftime("%Y-%m-%d %H:%M") not in shown.stdout:
+        raise RuntimeError(
+            f"watchdog timer is not scheduled for the recorded deadline: {shown.stdout.strip()}"
+        )
+    return {"unit": timer_unit, "next": shown.stdout.strip()}
 
 
 def _parse_arguments() -> argparse.Namespace:
