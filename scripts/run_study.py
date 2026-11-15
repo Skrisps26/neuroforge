@@ -30,6 +30,14 @@ from neuroforge.contracts import CandidateRecord, GateDecision, GateOutcome, Met
 
 _EXPORT_RESERVE_SECONDS = 60.0
 _METHODS = ("B0", "M1", "M2", "M3", "R0", "R1", "R2")
+_PER_FAULT_PHASES = frozenset({"population", "diagnostics", "candidates", "sealed"})
+
+
+def _stage_key(args: argparse.Namespace) -> str | None:
+    """Fault-scoped stage identity. Only per-fault phases isolate records by fault."""
+    if args.phase in _PER_FAULT_PHASES:
+        return args.fault_id
+    return None
 
 
 def _parse_deadline(value: str | None) -> datetime | None:
@@ -702,7 +710,7 @@ def _phase_first_proof(
 def _phase_population(
     args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
 ) -> StageResult:
-    existing = _existing_stage(args.run_dir, "population", digest)
+    existing = _existing_stage(args.run_dir, "population", digest, fault_id=_stage_key(args))
     if existing is not None:
         return existing
     started = time.monotonic()
@@ -720,6 +728,7 @@ def _phase_population(
                 started=started,
                 errors=["baseline did not complete"],
             ),
+            fault_id=_stage_key(args),
         )
     failures: list[str] = []
     outputs: list[str] = []
@@ -755,13 +764,14 @@ def _phase_population(
             outputs=outputs,
             errors=failures,
         ),
+        fault_id=_stage_key(args),
     )
 
 
 def _phase_diagnostics(
     args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
 ) -> StageResult:
-    existing = _existing_stage(args.run_dir, "diagnostics", digest)
+    existing = _existing_stage(args.run_dir, "diagnostics", digest, fault_id=_stage_key(args))
     if existing is not None:
         return existing
     started = time.monotonic()
@@ -791,13 +801,14 @@ def _phase_diagnostics(
             outputs=outputs,
             errors=errors,
         ),
+        fault_id=_stage_key(args),
     )
 
 
 def _phase_candidates(
     args: argparse.Namespace, config: Any, digest: str, libraries: dict[str, str]
 ) -> StageResult:
-    existing = _existing_stage(args.run_dir, "candidates", digest)
+    existing = _existing_stage(args.run_dir, "candidates", digest, fault_id=_stage_key(args))
     if existing is not None:
         return existing
     started = time.monotonic()
@@ -815,6 +826,7 @@ def _phase_candidates(
                 started=started,
                 errors=["baseline did not complete"],
             ),
+            fault_id=_stage_key(args),
         )
     outputs: list[str] = []
     errors: list[str] = []
@@ -884,6 +896,7 @@ def _phase_candidates(
             outputs=outputs,
             errors=errors,
         ),
+        fault_id=_stage_key(args),
     )
 
 
@@ -1343,7 +1356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.fault_id is not None:
             _configured_fault(config, args.fault_id)
         digest, libraries = _run_snapshot(config, args.run_dir)
-        existing = _existing_stage(args.run_dir, args.phase, digest)
+        existing = _existing_stage(args.run_dir, args.phase, digest, fault_id=_stage_key(args))
         if existing is not None:
             result = existing
         else:
@@ -1362,7 +1375,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "costs are durable records only; no provider API was queried",
                         ],
                     ),
-                    fault_id=args.fault_id,
+                    fault_id=_stage_key(args),
                 )
             else:
                 result = _dispatch(args, config, digest, libraries)
