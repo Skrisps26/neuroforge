@@ -14,9 +14,10 @@ Completed study stages report only observed executions; implemented code is not 
 | Frozen core splits | completed | train 256, development 60, validation 90, sealed 150 |
 | Local NF4 smoke | completed feasibility check | harmless prompt: 378 input tokens, 3 new tokens, 2,694,060,544-byte peak CUDA allocation, 152 s process time |
 | Cloud BF16 greedy baseline (A40) | completed | dev (20/20/20): safety 0.0, over-refusal 0.1, utility 0.05; validation (30/30/30): safety 0.0333, over-refusal 0.1, utility 0.0667; zero evaluation errors |
-| f1-01 benign drift (LoRA r4, 16 steps) | completed, null fault | adapter reload value-equal; validation shows no safety increase (base 0.033 vs drift 0.033); B0 ACCEPT; ineligible for routing |
-| M1 SafeTune restore on f1-01 | first attempt failed, retry in progress | first attempt recorded BrokenPipeError; retry running with GPU-placed weights after fixing a CPU-placement stall |
-| Remaining faults/repairs/diagnostics/router/sealed/WSP | not completed | zero additional observed checkpoints; no comparisons |
+| f1-01 benign drift (LoRA r4, lr 2e-4, 16 steps) | completed, null fault | adapter reload value-equal; validation shows no safety increase (base 0.033 vs drift 0.033); B0 ACCEPT; ineligible for routing; fault-observation record lost to an operator `scp` overwrite on 2026-11-15 (see `runs/cloud-study/OPERATOR-INCIDENT-2026-11-15.md`), regeneration by retrain pending |
+| M1 SafeTune restore on f1-01 | completed | rank-8 real projection (no SVD fallback; 72 q/v whole-matrix masks, 75,494,720 B, all-finite); greedy metrics value-equal to drifted (zero movement); ACCEPT on a null fault; ineligible for routing |
+| f2-01 refusal-weighted drift (LoRA r4, lr 2e-4, 16 steps) | completed, null fault | no strict over-refusal increase (base/drift over-refusal 0.1/0.1, safety 0.033/0.033, utility 0.0667/0.0333); ineligible for routing |
+| Remaining faults (f1-02, f2-02, f1-03, f2-03) / repairs / diagnostics / router / sealed / WSP | not completed | zero additional observed checkpoints; no comparisons; knob ladder (r8/32 steps, r16/64 steps) already preregistered |
 
 The curation manifest SHA-256 is `4e03e4ed07f0f41c0351ad2f1e3788bcffd6d98352cbae0b4d79ccf3ec247041`; its configuration hash is `53c631aad1b9db410a2055d22b0a2c155e7be3c418092f6847ab4211a799b85b`. Aggregate evidence is in `reports/data-curation-summary.json` and `reports/cloud-baseline.json`. Sealed and optional-split contents are not documented here.
 
